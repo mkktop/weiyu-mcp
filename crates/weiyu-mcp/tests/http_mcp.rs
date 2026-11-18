@@ -46,7 +46,8 @@ fn admin_app(dir: &std::path::Path) -> Router {
         service.clone(),
         settings_store,
         cookie_store,
-        ADMIN_TOKEN.into(),
+        Some(dir.to_path_buf()),
+        Some(ADMIN_TOKEN.into()),
     );
     http::router(
         service,
@@ -61,8 +62,10 @@ fn admin_request(method: &str, path: &str, token: &str, body: Option<Value>) -> 
     let mut builder = Request::builder()
         .method(method)
         .uri(path)
-        .header("host", "localhost")
-        .header("authorization", format!("Bearer {token}"));
+        .header("host", "localhost");
+    if !token.is_empty() {
+        builder = builder.header("authorization", format!("Bearer {token}"));
+    }
     if body.is_some() {
         builder = builder.header("content-type", "application/json");
     }
@@ -360,4 +363,150 @@ async fn admin_qr_poll_rejects_invalid_key_without_network() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn admin_password_setup_login_and_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = admin_app(dir.path());
+
+    let response = app
+        .clone()
+        .oneshot(admin_request("GET", "/admin/api/auth/state", "", None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body["needs_setup"], true);
+    assert_eq!(body["authenticated"], false);
+
+    let response = app
+        .clone()
+        .oneshot(admin_request(
+            "POST",
+            "/admin/api/auth/setup",
+            "",
+            Some(json!({})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let session = body["session"].as_str().unwrap().to_string();
+    assert_eq!(body["using_default_password"], true);
+    assert!(dir.path().join("admin.json").exists());
+
+    let response = app
+        .clone()
+        .oneshot(admin_request(
+            "POST",
+            "/admin/api/auth/setup",
+            "",
+            Some(json!({"password":"other"})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    let response = app
+        .clone()
+        .oneshot(admin_request(
+            "GET",
+            "/admin/api/auth/state",
+            &session,
+            None,
+        ))
+        .await
+        .unwrap();
+    let body: Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body["authenticated"], true);
+    assert_eq!(body["needs_setup"], false);
+    assert_eq!(body["using_default_password"], true);
+
+    let response = app
+        .clone()
+        .oneshot(admin_request("GET", "/admin/api/status", &session, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(admin_request(
+            "POST",
+            "/admin/api/auth/login",
+            "",
+            Some(json!({"password":"wrong"})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let response = app
+        .clone()
+        .oneshot(admin_request(
+            "POST",
+            "/admin/api/auth/login",
+            "",
+            Some(json!({"password":"admin"})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(admin_request(
+            "POST",
+            "/admin/api/auth/password",
+            &session,
+            Some(json!({"current_password":"admin","new_password":"secret-1234"})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let new_session = body["session"].as_str().unwrap().to_string();
+
+    let response = app
+        .clone()
+        .oneshot(admin_request("GET", "/admin/api/status", &session, None))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let response = app
+        .clone()
+        .oneshot(admin_request(
+            "POST",
+            "/admin/api/auth/login",
+            "",
+            Some(json!({"password":"admin"})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let response = app
+        .clone()
+        .oneshot(admin_request(
+            "POST",
+            "/admin/api/auth/login",
+            "",
+            Some(json!({"password":"secret-1234"})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = app
+        .oneshot(admin_request(
+            "GET",
+            "/admin/api/status",
+            &new_session,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 }

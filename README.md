@@ -109,24 +109,25 @@ stdio 客户端：
 
 ## 管理台（WebUI）
 
-`serve` 模式在 `/admin` 提供管理台，使用**独立于 MCP 的 admin token**：
+`serve` 模式在 `/admin` 提供管理台。**首次访问会让设置管理密码**，默认 `admin`，可直接使用或改成自己的密码；密码用 Argon2 哈希后保存到 `$WEIYU_DATA_DIR/admin.json`。
 
 ```bash
-umask 077
-openssl rand -hex 32 > admin-token
 weiyu-mcp serve \
   --listen 127.0.0.1:8787 \
   --token-file ./mcp-token \
-  --admin-token-file ./admin-token \
   --data-dir ./data
 ```
 
-- 浏览器打开 `http://127.0.0.1:8787/admin`，输入 admin token 进入。
-- 功能：B 站扫码登录、验证登录态、退出登录、限速/并发/超时/写入开关。
+- 浏览器打开 `http://127.0.0.1:8787/admin`，首次进入设置管理密码（默认 `admin`），之后用密码登录。
+- 登录会话 12 小时；服务重启后需要重新登录。
+- 功能：B 站扫码登录、验证登录态、退出登录、限速/并发/超时/写入开关、修改管理密码。
 - 扫码成功后 Cookie 写入 `$WEIYU_DATA_DIR/bilibili.cookie`，并立即热更新内存凭据，不需要重启。
 - `$WEIYU_DATA_DIR/settings.json` 保存运行设置；文件存在后以文件为准，CLI/环境变量只作为首次启动的初始值。
 - 限速、超时、写入开关即时生效；**并发数修改需要重启容器**（信号量在启动时创建）。
-- 未配置 admin token 时管理台禁用，`/mcp` 不受影响。
+- 忘记管理密码：删除 `$WEIYU_DATA_DIR/admin.json` 后重启，重新进入设置页。
+- `WEIYU_ADMIN_TOKEN` / `--admin-token-file` 现在是**可选的 API Bearer**，供脚本/自动化直接调用管理 API；不配置也可以使用管理台密码登录。
+
+> 首次设置密码之前，能访问 `/admin` 的人都可以先设置密码；部署后请尽快完成首次设置，并使用非默认密码。
 
 数据目录建议：
 
@@ -246,9 +247,9 @@ docker compose up -d --no-build
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `WEIYU_DATA_DIR` | 无 | 可写数据目录；存放 `settings.json` 和扫码登录后的 `bilibili.cookie` |
+| `WEIYU_DATA_DIR` | 无 | 可写数据目录；存放 `settings.json`、`admin.json` 和扫码登录后的 `bilibili.cookie` |
 | `WEIYU_COOKIE_FILE` | 无 | 只读 Cookie 回退文件；数据目录 Cookie 优先 |
-| `WEIYU_ADMIN_TOKEN` / `WEIYU_ADMIN_TOKEN_FILE` | 无 | 管理台令牌，至少 32 字符；未配置时管理台禁用 |
+| `WEIYU_ADMIN_TOKEN` / `WEIYU_ADMIN_TOKEN_FILE` | 无 | 可选的 admin API Bearer；管理台密码在首次访问时设置，不依赖此项 |
 | `WEIYU_ALLOW_WRITE` | `false` | 首次启动的写入开关；`settings.json` 存在后以文件为准 |
 | `WEIYU_MCP_TOKEN` / `WEIYU_MCP_TOKEN_FILE` | 无 | HTTP MCP Bearer 令牌，至少 32 字符 |
 | `WEIYU_LISTEN` | `127.0.0.1:8787` | HTTP 监听地址 |

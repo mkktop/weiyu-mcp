@@ -142,7 +142,35 @@ def main():
             raise AssertionError("Unauthenticated admin request was accepted")
         except urllib.error.HTTPError as error:
             assert error.code == 401
+        state = json.loads(opener.open(base + "/admin/api/auth/state", timeout=10).read())
+        assert state["needs_setup"] is True
+        setup = json.loads(
+            opener.open(
+                urllib.request.Request(
+                    base + "/admin/api/auth/setup",
+                    data=b"{}",
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                ),
+                timeout=10,
+            ).read()
+        )
+        assert setup["using_default_password"] is True
+        session = setup["session"]
         admin_status = json.loads(
+            opener.open(
+                urllib.request.Request(
+                    base + "/admin/api/status",
+                    headers={"Authorization": "Bearer " + session},
+                ),
+                timeout=10,
+            ).read()
+        )
+        assert admin_status["read_tools"] == 35
+        assert admin_status["write_tools"] == 40
+        assert admin_status["persistence"] is True
+        assert admin_status["using_default_password"] is True
+        legacy_status = json.loads(
             opener.open(
                 urllib.request.Request(
                     base + "/admin/api/status",
@@ -151,9 +179,7 @@ def main():
                 timeout=10,
             ).read()
         )
-        assert admin_status["read_tools"] == 35
-        assert admin_status["write_tools"] == 40
-        assert admin_status["persistence"] is True
+        assert legacy_status["read_tools"] == 35
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",

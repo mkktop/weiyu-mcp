@@ -70,7 +70,7 @@ weiyu-core
 | 面 | 措施 |
 | --- | --- |
 | MCP 访问 | 至少 32 字符 Bearer，常量时间比较 |
-| 管理台 | 独立 admin Bearer，与 MCP 令牌分离；未配置时管理台禁用 |
+| 管理台 | 首次访问设置密码（默认 `admin`，Argon2 哈希 + 12 小时会话）；可选的 admin API Bearer 供脚本使用 |
 | Host | 默认只允许本机；对外必须显式 `--allowed-host` |
 | Origin | 默认拒绝所有带 Origin 的浏览器请求 |
 | 请求体 | MCP 1 MiB；管理 API 64 KiB |
@@ -100,7 +100,9 @@ weiyu-core
 
 ## 管理台与扫码登录
 
-- `GET /admin` 返回嵌入二进制的单页管理界面；`/admin/api/*` 需要 `WEIYU_ADMIN_TOKEN`。
+- `GET /admin` 返回嵌入二进制的单页管理界面；首次访问进入设置页，默认密码 `admin`，密码哈希保存在 `$WEIYU_DATA_DIR/admin.json`。
+- 登录成功后服务端签发 12 小时会话 token；UI 只在 sessionStorage 保存会话，不保存明文密码。
+- `WEIYU_ADMIN_TOKEN` / `--admin-token-file` 是可选的 API Bearer，供脚本直接调用管理 API；管理台密码登录不依赖它。
 - 扫码登录：`POST /admin/api/login/qrcode` 调 B 站生成二维码并返回 SVG；`GET /admin/api/login/poll?key=...` 轮询状态。
 - 登录成功后把 Cookie 写入 `$WEIYU_DATA_DIR/bilibili.cookie`（原子写、0600），同时替换 `QueryService` 内存凭据，MCP 下一次调用立即使用新 Cookie。
 - 退出登录写入空 Cookie 文件作为标记，避免只读回退 Cookie 在重启后重新生效。
@@ -112,4 +114,4 @@ weiyu-core
 2. **多令牌/配额**：现在 MCP 和 admin 各一个静态令牌；多 AI 客户端场景可加命名令牌和每令牌限速。
 3. **指标**：`/healthz` 已提供基础信息，尚未暴露 Prometheus 指标。
 4. **OAuth**：远程 MCP 目前只支持静态 Bearer；需要动态授权时再评估 OAuth 2.1。
-5. **管理台令牌轮换**：目前修改 admin token 需要更新 secret 并重启。
+5. **admin API 令牌轮换**：管理密码可以在管理台修改；可选的 admin API Bearer 修改后需要重启。

@@ -195,17 +195,15 @@ async fn run(cli: Cli) -> Result<(), QueryError> {
             let token = auth::load_required_token(token_file.as_deref(), "WEIYU_MCP_TOKEN")?;
             let admin_token =
                 auth::load_token_file(admin_token_file.as_deref(), "WEIYU_ADMIN_TOKEN")?;
-            let admin_enabled = admin_token.is_some();
-            let admin = admin_token.map(|token| {
-                AdminState::new(
-                    service.clone(),
-                    settings_store.clone(),
-                    cookie_store.clone(),
-                    token,
-                )
-            });
-            if !admin_enabled {
-                eprintln!("提示：未配置 WEIYU_ADMIN_TOKEN / --admin-token-file，管理台未启用。");
+            let admin = AdminState::new(
+                service.clone(),
+                settings_store.clone(),
+                cookie_store.clone(),
+                cli.data_dir.clone(),
+                admin_token,
+            );
+            if cli.data_dir.is_none() {
+                eprintln!("提示：未配置 WEIYU_DATA_DIR，管理台密码无法持久化。");
             }
             if service.allow_write() {
                 eprintln!(
@@ -216,7 +214,7 @@ async fn run(cli: Cli) -> Result<(), QueryError> {
             let app = http::router(
                 service,
                 token,
-                admin,
+                Some(admin),
                 allowed_host,
                 allowed_origin,
                 cancel.clone(),
@@ -226,9 +224,7 @@ async fn run(cli: Cli) -> Result<(), QueryError> {
                 .map_err(|e| QueryError::new("LISTEN_ERROR", e.to_string()))?;
             let address = listener.local_addr().unwrap_or(listen);
             eprintln!("未雨 HTTP MCP: http://{address}/mcp");
-            if admin_enabled {
-                eprintln!("未雨管理台: http://{address}/admin");
-            }
+            eprintln!("未雨管理台: http://{address}/admin（首次访问设置管理密码，默认 admin）");
             axum::serve(listener, app)
                 .with_graceful_shutdown(async move {
                     http::shutdown_signal().await;

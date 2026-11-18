@@ -1,5 +1,5 @@
 use crate::{
-    auth,
+    admin_auth::{self, AdminAuth},
     cookie_store::CookieStore,
     error::QueryError,
     query::QueryService,
@@ -7,7 +7,7 @@ use crate::{
 };
 use axum::{
     extract::{DefaultBodyLimit, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     middleware,
     response::Html,
     routing::{get, post},
@@ -15,7 +15,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{sync::Arc, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 use weiyu_core::bilibili as bili;
 
 const INDEX_HTML: &str = include_str!("../static/admin.html");
@@ -25,7 +25,7 @@ pub struct AdminState {
     service: Arc<QueryService>,
     settings_store: SettingsStore,
     cookie_store: CookieStore,
-    admin_token: String,
+    auth: Arc<AdminAuth>,
     started_at: Instant,
     read_tool_count: usize,
     write_tool_count: usize,
@@ -36,13 +36,14 @@ impl AdminState {
         service: Arc<QueryService>,
         settings_store: SettingsStore,
         cookie_store: CookieStore,
-        admin_token: String,
+        data_dir: Option<PathBuf>,
+        legacy_admin_token: Option<String>,
     ) -> Self {
         Self {
             service,
             settings_store,
             cookie_store,
-            admin_token,
+            auth: AdminAuth::new(data_dir, legacy_admin_token),
             started_at: Instant::now(),
             read_tool_count: crate::query::tools(false).len(),
             write_tool_count: crate::query::tools(true).len(),
@@ -51,7 +52,13 @@ impl AdminState {
 }
 
 pub fn router(state: AdminState) -> Router {
-    let token = Arc::new(state.admin_token.clone());
+    let auth = state.auth.clone();
+    let public = Router::new()
+        .route("/admin/api/auth/state", get(auth_state))
+        .route("/admin/api/auth/setup", post(auth_setup))
+        .route("/admin/api/auth/login", post(auth_login))
+        .layer(DefaultBodyLimit::max(64 * 1024))
+        .with_state(state.clone());
     let protected = Router::new()
         .route("/admin/api/status", get(status))
         .route("/admin/api/settings", get(get_settings).put(put_settings))
@@ -59,17 +66,23 @@ pub fn router(state: AdminState) -> Router {
         .route("/admin/api/login/poll", get(login_poll))
         .route("/admin/api/login/verify", post(login_verify))
         .route("/admin/api/logout", post(logout))
+        .route("/admin/api/auth/logout", post(auth_logout))
+        .route("/admin/api/auth/password", post(change_password))
         .layer(DefaultBodyLimit::max(64 * 1024))
-        .layer(middleware::from_fn_with_state(token, auth::authorize))
+        .layer(middleware::from_fn_with_state(auth, admin_auth::authorize))
         .with_state(state);
     Router::new()
         .route("/admin", get(index))
         .route("/admin/", get(index))
+        .merge(public)
         .merge(protected)
 }
 
-async fn index() -> Html<&'static str> {
-    Html(INDEX_HTML)
+async fn index() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CACHE_CONTROL, "no-store")],
+        Html(INDEX_HTML),
+    )
 }
 
 type ApiError = (StatusCode, Json<Value>);
@@ -83,12 +96,90 @@ fn api_error(status: StatusCode, code: &'static str, message: impl Into<String>)
 
 fn map_query_error(error: QueryError) -> ApiError {
     let status = match error.code {
-        "INVALID_PARAMS" | "CONFIG_ERROR" => StatusCode::BAD_REQUEST,
+        "INVALID_PARAMS" | "CONFIG_ERROR" | "INVALID_PASSWORD" => StatusCode::BAD_REQUEST,
         "AUTH_REQUIRED" => StatusCode::UNAUTHORIZED,
+        "CONFLICT" => StatusCode::CONFLICT,
+        "SETUP_REQUIRED" => StatusCode::PRECONDITION_REQUIRED,
+        "RATE_LIMITED" => StatusCode::TOO_MANY_REQUESTS,
         "UPSTREAM_ERROR" | "BILIBILI_VERIFICATION_REQUIRED" => StatusCode::BAD_GATEWAY,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     api_error(status, error.code, error.message)
+}
+
+#[derive(Deserialize)]
+struct SetupRequest {
+    password: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct LoginRequest {
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct ChangePasswordRequest {
+    current_password: String,
+    new_password: String,
+}
+
+async fn auth_state(State(state): State<AdminState>, headers: HeaderMap) -> Json<Value> {
+    let auth = state.auth.state(admin_auth::bearer_token(&headers));
+    Json(json!({
+        "needs_setup": auth.needs_setup,
+        "authenticated": auth.authenticated,
+        "using_default_password": auth.using_default_password,
+    }))
+}
+
+async fn auth_setup(
+    State(state): State<AdminState>,
+    Json(request): Json<SetupRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let (session, using_default_password) = state
+        .auth
+        .setup(request.password.as_deref())
+        .map_err(map_query_error)?;
+    Ok(Json(json!({
+        "session": session,
+        "using_default_password": using_default_password,
+    })))
+}
+
+async fn auth_login(
+    State(state): State<AdminState>,
+    Json(request): Json<LoginRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if request.password.is_empty() {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_PARAMS",
+            "请输入管理密码",
+        ));
+    }
+    let session = state
+        .auth
+        .login(&request.password)
+        .map_err(map_query_error)?;
+    Ok(Json(json!({"session": session})))
+}
+
+async fn auth_logout(State(state): State<AdminState>, headers: HeaderMap) -> Json<Value> {
+    if let Some(token) = admin_auth::bearer_token(&headers) {
+        state.auth.logout(token);
+    }
+    Json(json!({"ok": true}))
+}
+
+async fn change_password(
+    State(state): State<AdminState>,
+    Json(request): Json<ChangePasswordRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let session = state
+        .auth
+        .change_password(&request.current_password, &request.new_password)
+        .map_err(map_query_error)?;
+    Ok(Json(json!({"ok": true, "session": session})))
 }
 
 async fn status(State(state): State<AdminState>) -> Json<Value> {
@@ -105,6 +196,7 @@ async fn status(State(state): State<AdminState>) -> Json<Value> {
         "write_enabled": settings.allow_write,
         "settings": settings,
         "restart_required": state.service.restart_required(),
+        "using_default_password": state.auth.using_default_password(),
         "data_dir": state
             .cookie_store
             .data_path()

@@ -8,11 +8,14 @@ description = "Headless Bilibili query and interaction MCP server"
 [dependencies]
 weiyu-core = { path = "../weiyu-core", default-features = false, features = ["rustls"] }
 anyhow = "1"
+argon2 = "0.5"
 axum = "0.8"
+hex = "0.4"
 http-body-util = "0.1"
 clap = { version = "4", features = ["derive", "env"] }
 log = "0.4"
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 rmcp = { version = "3", features = ["server", "transport-io", "transport-streamable-http-server"] }
 schemars = "1"

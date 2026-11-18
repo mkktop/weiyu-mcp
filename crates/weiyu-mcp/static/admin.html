@@ -94,17 +94,18 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
 </head>
 <body>
 <div class="wrap">
-  <div id="login-panel" class="login hidden">
+  <div id="auth-panel" class="login hidden">
     <h1>未雨 <span>MCP</span></h1>
-    <p>输入管理台访问令牌。令牌在服务器的 <code>admin-token</code> 文件中。</p>
+    <h2 id="auth-title" style="font-size:16px;margin:0 0 8px">管理台登录</h2>
+    <p id="auth-hint">输入管理密码。</p>
     <label class="field">
-      <span>管理员令牌</span>
-      <input id="token-input" type="password" autocomplete="current-password" placeholder="至少 32 个字符">
+      <span id="auth-label">管理密码</span>
+      <input id="auth-password" type="password" autocomplete="current-password" placeholder="输入管理密码">
     </label>
     <div class="actions">
-      <button class="primary" id="token-login">进入管理台</button>
+      <button class="primary" id="auth-submit">登录</button>
     </div>
-    <div id="login-msg" class="msg"></div>
+    <div id="auth-msg" class="msg"></div>
   </div>
 
   <div id="app" class="hidden">
@@ -130,6 +131,7 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
         <div class="row"><span class="label">B站登录</span><span class="value" id="credential">-</span></div>
         <div class="row"><span class="label">写入能力</span><span class="value" id="write">-</span></div>
         <div class="row"><span class="label">数据目录</span><span class="value" id="data-dir">-</span></div>
+        <div class="row"><span class="label">管理密码</span><span class="value" id="admin-password">-</span></div>
       </section>
 
       <section class="card">
@@ -173,6 +175,28 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
       </div>
     </section>
 
+    <section class="card" style="margin-top:16px">
+      <h2>管理密码</h2>
+      <div class="muted" id="password-note"></div>
+      <div class="grid">
+        <label class="field">
+          <span>当前密码</span>
+          <input id="current-password" type="password" autocomplete="current-password">
+        </label>
+        <label class="field">
+          <span>新密码</span>
+          <input id="new-password" type="password" autocomplete="new-password">
+        </label>
+        <label class="field">
+          <span>确认新密码</span>
+          <input id="confirm-password" type="password" autocomplete="new-password">
+        </label>
+      </div>
+      <div class="actions">
+        <button class="primary" id="change-password">修改管理密码</button>
+      </div>
+    </section>
+
     <footer>未雨 MCP · 管理接口同样使用 Bearer 令牌保护</footer>
   </div>
 </div>
@@ -180,10 +204,13 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const TOKEN_KEY = 'weiyu_admin_token';
-  let token = sessionStorage.getItem(TOKEN_KEY) || '';
+  const SESSION_KEY = 'weiyu_admin_session';
+  let session = sessionStorage.getItem(SESSION_KEY) || '';
+  let authMode = 'login';
   let qrKey = null;
   let pollTimer = null;
+
+  sessionStorage.removeItem('weiyu_admin_token');
 
   function showMsg(text, kind) {
     const el = $('msg');
@@ -195,10 +222,42 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
     el.className = 'msg';
     el.textContent = '';
   }
-  function showLogin(show) {
-    $('login-panel').classList.toggle('hidden', !show);
-    $('app').classList.toggle('hidden', show);
-    if (show) $('token-input').focus();
+  function showAuthError(text) {
+    const el = $('auth-msg');
+    el.className = 'msg show error';
+    el.textContent = text;
+  }
+  function showAuthMode(mode) {
+    authMode = mode;
+    clearMsg();
+    $('auth-panel').classList.remove('hidden');
+    $('app').classList.add('hidden');
+    const msg = $('auth-msg');
+    msg.className = 'msg';
+    msg.textContent = '';
+    if (mode === 'setup') {
+      $('auth-title').textContent = '设置管理密码';
+      $('auth-hint').textContent =
+        '首次使用，请设置管理密码。默认 admin，可直接使用或修改；建议设置后尽快改成你自己的密码。';
+      $('auth-label').textContent = '新管理密码';
+      $('auth-password').value = 'admin';
+      $('auth-password').placeholder = '默认 admin';
+      $('auth-password').autocomplete = 'new-password';
+      $('auth-submit').textContent = '保存并进入';
+    } else {
+      $('auth-title').textContent = '管理台登录';
+      $('auth-hint').textContent = '输入管理密码。';
+      $('auth-label').textContent = '管理密码';
+      $('auth-password').value = '';
+      $('auth-password').placeholder = '输入管理密码';
+      $('auth-password').autocomplete = 'current-password';
+      $('auth-submit').textContent = '登录';
+    }
+    $('auth-password').focus();
+  }
+  function showApp() {
+    $('auth-panel').classList.add('hidden');
+    $('app').classList.remove('hidden');
   }
   function fmtUptime(seconds) {
     seconds = Number(seconds || 0);
@@ -211,28 +270,101 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
   }
   async function api(path, options = {}) {
     const headers = Object.assign({}, options.headers || {});
-    if (token) headers['Authorization'] = 'Bearer ' + token;
+    if (session) headers['Authorization'] = 'Bearer ' + session;
     if (options.body) headers['Content-Type'] = 'application/json';
     const response = await fetch(path, Object.assign({}, options, { headers }));
     let data = null;
-    try { data = await response.json(); } catch (_) {}
+    try {
+      data = await response.json();
+    } catch (_) {}
     if (response.status === 401) {
-      token = '';
-      sessionStorage.removeItem(TOKEN_KEY);
-      showLogin(true);
-      throw new Error('认证失败，请重新输入管理员令牌');
+      session = '';
+      sessionStorage.removeItem(SESSION_KEY);
+      await loadAuthState();
+      throw new Error('认证失败，请重新登录');
     }
     if (!response.ok) {
-      throw new Error((data && data.error && data.error.message) || response.statusText);
+      const error = new Error(
+        (data && data.error && data.error.message) || response.statusText
+      );
+      error.status = response.status;
+      error.code = data && data.error && data.error.code;
+      throw error;
     }
     return data;
+  }
+
+  async function loadAuthState() {
+    try {
+      const headers = session ? { Authorization: 'Bearer ' + session } : {};
+      const response = await fetch('/admin/api/auth/state', { headers });
+      const data = await response.json();
+      if (data.authenticated) {
+        showApp();
+        await refreshStatus();
+        return;
+      }
+      if (data.needs_setup) {
+        showAuthMode('setup');
+        return;
+      }
+      showAuthMode('login');
+    } catch (error) {
+      showAuthMode('login');
+      showAuthError('无法连接服务：' + error.message);
+    }
+  }
+
+  async function submitAuth() {
+    const raw = $('auth-password').value.trim();
+    const password = raw || (authMode === 'setup' ? 'admin' : '');
+    if (!password) {
+      showAuthError('请输入管理密码');
+      return;
+    }
+    const path =
+      authMode === 'setup'
+        ? '/admin/api/auth/setup'
+        : '/admin/api/auth/login';
+    try {
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (
+          data.error &&
+          (data.error.code === 'CONFLICT' || data.error.code === 'SETUP_REQUIRED')
+        ) {
+          await loadAuthState();
+          return;
+        }
+        throw new Error(
+          (data.error && data.error.message) || response.statusText
+        );
+      }
+      session = data.session;
+      sessionStorage.setItem(SESSION_KEY, session);
+      clearMsg();
+      showApp();
+      await refreshStatus();
+      if (data.using_default_password) {
+        showMsg('已使用默认密码 admin，建议在“管理密码”里尽快修改', 'warn');
+      }
+    } catch (error) {
+      showAuthError(error.message);
+    }
   }
 
   async function refreshStatus() {
     try {
       const data = await api('/admin/api/status');
-      showLogin(false);
-      $('header-sub').textContent = `v${data.version} · uptime ${fmtUptime(data.uptime_secs)}`;
+      showApp();
+      $('header-sub').textContent = `v${data.version} · uptime ${fmtUptime(
+        data.uptime_secs
+      )}`;
       $('version').textContent = data.version;
       $('uptime').textContent = fmtUptime(data.uptime_secs);
       $('tools').textContent = `${data.read_tools} 只读 / ${data.write_tools} 含写入`;
@@ -240,9 +372,17 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
         ? `已配置（${data.credential_source}）`
         : '未登录';
       $('write').textContent = data.write_enabled
-        ? (data.write_ready ? '已开启，Cookie 可写' : '已开启，但 Cookie 缺少 bili_jct')
+        ? data.write_ready
+          ? '已开启，Cookie 可写'
+          : '已开启，但 Cookie 缺少 bili_jct'
         : '未开启';
       $('data-dir').textContent = data.data_dir || '未配置（无法持久化）';
+      $('admin-password').textContent = data.using_default_password
+        ? '默认 admin（建议修改）'
+        : '已自定义';
+      $('password-note').textContent = data.using_default_password
+        ? '当前使用默认密码 admin，建议立即修改。'
+        : '';
       $('rate-limit').value = data.settings.rate_limit;
       $('max-concurrency').value = data.settings.max_concurrency;
       $('timeout-secs').value = data.settings.timeout_secs;
@@ -252,7 +392,7 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
         : '';
       if (!data.credential_configured) $('user').textContent = '-';
     } catch (error) {
-      if (!token) return;
+      if (!session) return;
       showMsg(error.message, 'error');
     }
   }
@@ -274,9 +414,11 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
   }
 
   async function pollLogin() {
-    if (!qrKey || !token) return;
+    if (!qrKey || !session) return;
     try {
-      const data = await api('/admin/api/login/poll?key=' + encodeURIComponent(qrKey));
+      const data = await api(
+        '/admin/api/login/poll?key=' + encodeURIComponent(qrKey)
+      );
       $('qr-status').textContent = data.message || '';
       if (data.status === 'success') {
         stopPolling();
@@ -297,31 +439,59 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
     }
   }
 
-  $('token-login').addEventListener('click', async () => {
-    const value = $('token-input').value.trim();
-    if (!value) return;
-    token = value;
-    sessionStorage.setItem(TOKEN_KEY, token);
-    const el = $('login-msg');
-    el.className = 'msg';
-    clearMsg();
+  async function logoutSession() {
+    stopPolling();
     try {
+      await api('/admin/api/auth/logout', { method: 'POST' });
+    } catch (_) {}
+    session = '';
+    sessionStorage.removeItem(SESSION_KEY);
+    showAuthMode('login');
+  }
+
+  async function changePassword() {
+    const current = $('current-password').value;
+    const next = $('new-password').value.trim();
+    const confirm = $('confirm-password').value.trim();
+    if (!current) {
+      showMsg('请输入当前密码', 'error');
+      return;
+    }
+    if (next.length < 4) {
+      showMsg('新密码至少 4 个字符', 'error');
+      return;
+    }
+    if (next !== confirm) {
+      showMsg('两次输入的新密码不一致', 'error');
+      return;
+    }
+    try {
+      const data = await api('/admin/api/auth/password', {
+        method: 'POST',
+        body: JSON.stringify({
+          current_password: current,
+          new_password: next,
+        }),
+      });
+      if (data.session) {
+        session = data.session;
+        sessionStorage.setItem(SESSION_KEY, session);
+      }
+      $('current-password').value = '';
+      $('new-password').value = '';
+      $('confirm-password').value = '';
+      showMsg('管理密码已修改', 'ok');
       await refreshStatus();
     } catch (error) {
-      el.className = 'msg show error';
-      el.textContent = error.message;
-      showLogin(true);
+      showMsg(error.message, 'error');
     }
+  }
+
+  $('auth-submit').addEventListener('click', submitAuth);
+  $('auth-password').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') submitAuth();
   });
-  $('token-input').addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') $('token-login').click();
-  });
-  $('token-logout').addEventListener('click', () => {
-    stopPolling();
-    token = '';
-    sessionStorage.removeItem(TOKEN_KEY);
-    showLogin(true);
-  });
+  $('token-logout').addEventListener('click', logoutSession);
   $('refresh').addEventListener('click', () => {
     clearMsg();
     refreshStatus();
@@ -333,7 +503,8 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
       const data = await api('/admin/api/logout', { method: 'POST' });
       stopPolling();
       $('user').textContent = '-';
-      $('qr-box').innerHTML = '<span class="muted">点击下方按钮生成二维码</span>';
+      $('qr-box').innerHTML =
+        '<span class="muted">点击下方按钮生成二维码</span>';
       $('qr-status').textContent = '';
       await refreshStatus();
       if (data.warning) showMsg(data.warning, 'warn');
@@ -379,10 +550,11 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
       showMsg(error.message, 'error');
     }
   });
+  $('change-password').addEventListener('click', changePassword);
 
-  if (token) refreshStatus();
-  else showLogin(true);
+  loadAuthState();
 })();
+
 </script>
 </body>
 </html>

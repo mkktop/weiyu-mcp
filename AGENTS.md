@@ -36,13 +36,19 @@ GHCR image are built in `.github/workflows/release.yml` (`deploy/Dockerfile.ci`)
 
 ## Admin UI and cookies
 
-- `/admin` serves the embedded single-page UI; `/admin/api/*` requires a separate admin Bearer token
-  (`WEIYU_ADMIN_TOKEN` / `--admin-token-file`). Do not reuse the MCP token for admin.
+- `/admin` serves the embedded single-page UI. First access asks the operator to set a management
+  password, default `admin`; the Argon2 hash is stored in `$WEIYU_DATA_DIR/admin.json`.
+- Password login creates a 12-hour in-memory session token. The UI sends it as a Bearer token; the
+  plaintext password is never stored client-side.
+- `WEIYU_ADMIN_TOKEN` / `--admin-token-file` is an optional admin API Bearer for scripts, not the UI
+  login credential. Do not route the UI through it.
 - QR login writes `$WEIYU_DATA_DIR/bilibili.cookie` and hot-swaps the in-memory credential.
 - A data-dir cookie wins over the read-only `WEIYU_COOKIE_FILE` fallback. An empty data-dir cookie is
   a logout marker and suppresses the fallback.
-- Settings/cookie files are written atomically with 0600. Keep the data dir writable only by the
+- Settings/cookie/admin files are written atomically with 0600. Keep the data dir writable only by the
   service user / container UID.
+- Changing the password invalidates all sessions and returns a fresh one. Forgetting the password is
+  recovered by deleting `admin.json` and restarting.
 
 ## Core copy policy
 
@@ -61,7 +67,7 @@ Avoid server-only changes in `weiyu-core` unless they are also acceptable to the
   `WEIYU_COOKIE_FILE` / `--cookie-file` fallback.
 - Never accept cookies as tool arguments, return them, or log them.
 - HTTP MCP requires a Bearer token (≥32 chars) via `WEIYU_MCP_TOKEN` or `--token-file`.
-- The admin UI requires a separate Bearer token (≥32 chars) via `WEIYU_ADMIN_TOKEN` or
-  `--admin-token-file`; without it `/admin` is disabled but `/mcp` keeps working.
-- Host/Origin validation and SSRF guards live in `src/http.rs`, `src/auth.rs` and `src/input.rs`;
-  keep them.
+- The admin UI uses a password (`admin.json`, Argon2) and a session token; `WEIYU_ADMIN_TOKEN` or
+  `--admin-token-file` is an optional API Bearer for scripts. Without it the UI still works.
+- Host/Origin validation and SSRF guards live in `src/http.rs`, `src/auth.rs`, `src/admin_auth.rs`
+  and `src/input.rs`; keep them.
