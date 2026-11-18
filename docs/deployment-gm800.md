@@ -122,12 +122,16 @@ compose 额外设置：
 health {'service': 'weiyu-mcp', 'status': 'ok', 'version': '0.3.1'}
 /admin 200，管理台密码已设置（needs_setup=false，非默认密码）
 /admin/api/status 无令牌 -> 401；MCP 令牌 -> 401；admin API 令牌 -> 200
-status: 35 只读 / 40 含写入，credential_configured=true（data），persistence=true
-/mcp tools/list -> 40（管理台已开启写入；关闭时为 35）
+status: 35 只读 / 41 全开，credential_configured=true（data），persistence=true
+/mcp tools/list -> 41（互动写入 + 评论写入均已开启；默认关闭时 35）
 扫码登录后 get_current_user -> bilblicopy（Lv2）
 get_article_content cvid=53698541 -> 约 1.5 万字正文
 get_article_content opus_id=1265361021143351318 -> 约 1.5 万字正文
 get_article_content cvid=999999999 -> 同时返回接口 -404 与页面解析失败原因
+post_comment 一级评论 -> OK，返回 rpid
+post_comment parent=主评论 -> OK，root=parent=主评论（索引延迟时 3 秒后自动重试）
+@ 用户 -> content.members 包含被@用户；@ 自己不生成提及
+测试评论已全部通过 x/v2/reply/del 删除，评论区计数恢复为 0
 ```
 
 ## 访问管理台
