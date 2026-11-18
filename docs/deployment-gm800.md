@@ -113,13 +113,14 @@ compose 额外设置：
 
 ```text
 health {'service': 'weiyu-mcp', 'status': 'ok', 'version': '0.2.4'}
-/admin 200，包含管理台和扫码界面
-/admin/api/auth/state -> {"authenticated":false,"needs_setup":true,...}
+/admin 200，管理台密码已设置（needs_setup=false，非默认密码）
 /admin/api/status 无令牌 -> 401；MCP 令牌 -> 401；admin API 令牌 -> 200
-status: 35 只读 / 40 含写入，credential_configured=false，persistence=true
-/mcp tools/list -> 35
-/admin/api/login/qrcode -> 200（qrcode_key 32 位，SVG）
-/admin/api/login/poll -> pending
+status: 35 只读 / 40 含写入，credential_configured=true（data），persistence=true
+/mcp tools/list -> 40（管理台已开启写入；关闭时为 35）
+扫码登录后 get_current_user -> bilblicopy（Lv2）
+get_article_content cvid=53698541 -> 约 1.5 万字正文
+get_article_content opus_id=1265361021143351318 -> 约 1.5 万字正文
+get_article_content cvid=999999999 -> 同时返回接口 -404 与页面解析失败原因
 ```
 
 ## 访问管理台
