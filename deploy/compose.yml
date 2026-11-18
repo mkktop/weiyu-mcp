@@ -1,6 +1,6 @@
 services:
   weiyu-mcp:
-    image: weiyu-mcp:${WEIYU_IMAGE_TAG:-0.1.0}
+    image: ${WEIYU_IMAGE:-weiyu-mcp:0.2.0}
     # Some hosts disable Docker's iptables management, which breaks DNS/NAT on
     # user-defined bridges. The default bridge keeps port mapping and works there.
     network_mode: bridge
@@ -17,6 +17,8 @@ services:
       - "127.0.0.1:8787:8787"
     environment:
       WEIYU_MCP_TOKEN_FILE: /run/secrets/mcp_token
+      WEIYU_ADMIN_TOKEN_FILE: /run/secrets/admin_token
+      WEIYU_DATA_DIR: /data
       WEIYU_COOKIE_FILE: /run/secrets/bilibili_cookie
       WEIYU_ALLOWED_HOSTS: ${WEIYU_PUBLIC_HOST:-localhost}
       WEIYU_RATE_LIMIT: ${WEIYU_RATE_LIMIT:-2}
@@ -24,8 +26,12 @@ services:
       WEIYU_TIMEOUT_SECS: ${WEIYU_TIMEOUT_SECS:-45}
       # 默认 false；开启后持有令牌的 AI 可以点赞/投币/收藏/修改稍后再看
       WEIYU_ALLOW_WRITE: ${WEIYU_ALLOW_WRITE:-false}
+    volumes:
+      # 可写数据目录：settings.json、扫码登录后的 bilibili.cookie
+      - ./data:/data
     secrets:
       - mcp_token
+      - admin_token
       - bilibili_cookie
     read_only: true
     cap_drop: [ALL]
@@ -35,5 +41,7 @@ services:
 secrets:
   mcp_token:
     file: ./secrets/mcp-token
+  admin_token:
+    file: ./secrets/admin-token
   bilibili_cookie:
     file: ./secrets/bilibili.cookie

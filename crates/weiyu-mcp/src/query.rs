@@ -1,13 +1,14 @@
 use crate::{
     error::{QueryError, Result},
     input,
+    settings::RuntimeSettings,
 };
 use rmcp::model::{Tool, ToolAnnotations};
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, RwLock},
     time::Duration,
 };
 use tokio::{
@@ -193,70 +194,109 @@ pub fn tools(allow_write: bool) -> Vec<Tool> {
 }
 
 pub struct QueryService {
-    credential: Option<Credential>,
-    allow_write: bool,
+    credential: RwLock<Option<Credential>>,
+    settings: RwLock<RuntimeSettings>,
+    startup_concurrency: usize,
     next_request: Mutex<Instant>,
-    interval: Duration,
     permits: Semaphore,
-    timeout: Duration,
+    timeout: RwLock<Duration>,
 }
 
 impl QueryService {
-    pub fn new(
+    pub fn new(credential: Option<Credential>, settings: RuntimeSettings) -> Arc<Self> {
+        Self::build(credential, settings, None)
+    }
+
+    #[cfg(test)]
+    fn new_with_timeout(
         credential: Option<Credential>,
-        allow_write: bool,
-        rate: u32,
-        concurrency: usize,
+        settings: RuntimeSettings,
         timeout: Duration,
     ) -> Arc<Self> {
+        Self::build(credential, settings, Some(timeout))
+    }
+
+    fn build(
+        credential: Option<Credential>,
+        settings: RuntimeSettings,
+        timeout: Option<Duration>,
+    ) -> Arc<Self> {
+        let startup_concurrency = settings.max_concurrency.max(1) as usize;
+        let timeout = timeout.unwrap_or_else(|| Duration::from_secs(settings.timeout_secs.max(1)));
         Arc::new(Self {
-            credential,
-            allow_write,
+            credential: RwLock::new(credential),
+            settings: RwLock::new(settings),
+            startup_concurrency,
             next_request: Mutex::new(Instant::now()),
-            interval: if rate == 0 {
-                Duration::ZERO
-            } else {
-                Duration::from_secs_f64(1.0 / rate as f64)
-            },
-            permits: Semaphore::new(concurrency),
-            timeout,
+            permits: Semaphore::new(startup_concurrency),
+            timeout: RwLock::new(timeout),
         })
     }
+
+    pub fn settings(&self) -> RuntimeSettings {
+        self.settings.read().expect("settings lock").clone()
+    }
+
     pub fn allow_write(&self) -> bool {
-        self.allow_write
+        self.settings.read().expect("settings lock").allow_write
     }
+
+    pub fn restart_required(&self) -> bool {
+        self.settings.read().expect("settings lock").max_concurrency as usize
+            != self.startup_concurrency
+    }
+
+    pub fn update_settings(&self, settings: RuntimeSettings) -> Result<()> {
+        settings.validate()?;
+        *self.timeout.write().expect("timeout lock") = Duration::from_secs(settings.timeout_secs);
+        *self.settings.write().expect("settings lock") = settings;
+        Ok(())
+    }
+
+    pub fn update_credential(&self, credential: Option<Credential>) {
+        *self.credential.write().expect("credential lock") = credential;
+    }
+
+    pub fn credential_snapshot(&self) -> Option<Credential> {
+        self.credential.read().expect("credential lock").clone()
+    }
+
     pub fn tools(&self) -> Vec<Tool> {
-        tools(self.allow_write)
+        tools(self.allow_write())
     }
-    fn credential(&self) -> Result<&Credential> {
-        self.credential.as_ref().ok_or_else(|| {
+
+    fn credential(&self) -> Result<Credential> {
+        self.credential_snapshot().ok_or_else(|| {
             QueryError::new(
                 "AUTH_REQUIRED",
-                "此查询需要B站Cookie；请由服务器管理员配置 --cookie-file 或 WEIYU_COOKIE_FILE。",
+                "此查询需要B站Cookie；请由服务器管理员配置 --cookie-file、WEIYU_COOKIE_FILE 或通过管理台扫码登录。",
             )
         })
     }
+
     fn ensure_write(&self) -> Result<()> {
-        if self.allow_write {
+        if self.allow_write() {
             Ok(())
         } else {
             Err(QueryError::new(
                 "UNKNOWN_TOOL",
-                "互动写入工具未启用；启动服务器时添加 --allow-write 或设置 WEIYU_ALLOW_WRITE=true。",
+                "互动写入工具未启用；请在管理台开启写入，或启动时设置 WEIYU_ALLOW_WRITE=true。",
             ))
         }
     }
+
     /// 互动写入额外要求 CSRF 字段；只有 SESSDATA 的 Cookie 只能读。
-    fn write_credential(&self) -> Result<&Credential> {
+    fn write_credential(&self) -> Result<Credential> {
         let credential = self.credential()?;
         if credential.bili_jct.trim().is_empty() {
             return Err(QueryError::new(
                 "AUTH_REQUIRED",
-                "互动写入需要包含 bili_jct 的 Cookie；请让服务器管理员更新 Cookie 文件。",
+                "互动写入需要包含 bili_jct 的 Cookie；请通过管理台重新扫码登录。",
             ));
         }
         Ok(credential)
     }
+
     pub async fn call(&self, name: &str, arguments: Value) -> Result<Value> {
         if !self.tools().iter().any(|tool| tool.name == name) {
             return Err(QueryError::new("UNKNOWN_TOOL", format!("未知工具：{name}")));
@@ -265,11 +305,18 @@ impl QueryService {
             .permits
             .try_acquire()
             .map_err(|_| QueryError::new("BUSY", "查询并发已满，请稍后重试"))?;
-        tokio::time::timeout(self.timeout, async {
-            if name != "get_login_status" && self.interval != Duration::ZERO {
+        let settings = self.settings();
+        let interval = if settings.rate_limit == 0 {
+            Duration::ZERO
+        } else {
+            Duration::from_secs_f64(1.0 / settings.rate_limit as f64)
+        };
+        let timeout = *self.timeout.read().expect("timeout lock");
+        tokio::time::timeout(timeout, async {
+            if name != "get_login_status" && interval != Duration::ZERO {
                 let mut next = self.next_request.lock().await;
                 tokio::time::sleep_until(*next).await;
-                *next = Instant::now() + self.interval;
+                *next = Instant::now() + interval;
             }
             let result = self.execute(name, arguments).await?;
             if serde_json::to_vec(&result)?.len() > 2 * 1024 * 1024 {
@@ -284,7 +331,8 @@ impl QueryService {
         .map_err(|_| QueryError::new("TIMEOUT", "查询超时，请稍后重试或缩小范围"))?
     }
     async fn execute(&self, name: &str, args: Value) -> Result<Value> {
-        let credential = self.credential.as_ref();
+        let credential_owned = self.credential_snapshot();
+        let credential = credential_owned.as_ref();
         match name {
             "get_login_status" => {
                 let _: Empty = parse(args)?;
@@ -292,14 +340,14 @@ impl QueryService {
                 Ok(json!({
                     "configured": credential.is_some(),
                     "verified": false,
-                    "write_enabled": self.allow_write,
+                    "write_enabled": self.allow_write(),
                     "write_ready": write_ready,
                     "hint": "使用get_current_user联网验证登录态；互动写入还需要服务器开启--allow-write且Cookie包含bili_jct"
                 }))
             }
             "get_current_user" => {
                 let _: Empty = parse(args)?;
-                output(bili::passport::validate_credentials(self.credential()?).await?)
+                output(bili::passport::validate_credentials(&self.credential()?).await?)
             }
             "parse_url" | "parse_video" => {
                 let p: Link = parse(args)?;
@@ -345,7 +393,7 @@ impl QueryService {
                     &p.keyword,
                     kind,
                     page(p.page)?,
-                    self.credential()?,
+                    &self.credential()?,
                     order,
                     duration,
                     tids,
@@ -412,7 +460,7 @@ impl QueryService {
                         &p.bvid,
                         input::positive(p.cid, "cid")?,
                         input::positive(p.up_mid, "up_mid")? as u64,
-                        self.credential()?,
+                        &self.credential()?,
                     )
                     .await?,
                 )
@@ -422,7 +470,7 @@ impl QueryService {
                 let aid = input::validate_bvid(&p.bvid)?;
                 let tracks = bili::subtitle::get_subtitle_urls_all(
                     &bili::api_client(),
-                    self.credential()?,
+                    &self.credential()?,
                     input::positive(p.cid, "cid")?,
                     &p.bvid,
                     aid,
@@ -458,7 +506,7 @@ impl QueryService {
                 let limit = input::bounded(p.limit.unwrap_or(300), 1, 2000, "limit")? as usize;
                 let rows = bili::danmaku::fetch_danmaku_list(
                     &bili::api_client(),
-                    self.credential()?,
+                    &self.credential()?,
                     input::positive(p.cid, "cid")?,
                     aid,
                     duration as u64,
@@ -507,7 +555,7 @@ impl QueryService {
                         input::positive(p.mid, "mid")?,
                         page(p.page)?,
                         p.keyword.as_deref(),
-                        self.credential()?,
+                        &self.credential()?,
                     )
                     .await?,
                 )
@@ -534,7 +582,7 @@ impl QueryService {
                         &p.sid,
                         choice(&p.collection_type, &["season", "series"], "collection_type")?,
                         page(p.page)?,
-                        self.credential()?,
+                        &self.credential()?,
                     )
                     .await?,
                 )
@@ -602,7 +650,7 @@ impl QueryService {
                 if offset.len() > 200 {
                     return Err(QueryError::invalid("offset过长"));
                 }
-                output(bili::dynamic::get_dynamic_feed(&offset, self.credential()?).await?)
+                output(bili::dynamic::get_dynamic_feed(&offset, &self.credential()?).await?)
             }
             "get_watch_history" => {
                 let p: History = parse(args)?;
@@ -621,11 +669,11 @@ impl QueryService {
                 } else {
                     None
                 };
-                output(bili::history::get_watch_history(cursor, self.credential()?).await?)
+                output(bili::history::get_watch_history(cursor, &self.credential()?).await?)
             }
             "get_favorite_folders" => {
                 let _: Empty = parse(args)?;
-                output(bili::favorite::get_user_favorite_folders(self.credential()?).await?)
+                output(bili::favorite::get_user_favorite_folders(&self.credential()?).await?)
             }
             "get_favorite_videos" => {
                 let p: Favorite = parse(args)?;
@@ -640,11 +688,11 @@ impl QueryService {
             }
             "get_watch_later" => {
                 let _: Empty = parse(args)?;
-                output(bili::watch_later::get_watch_later(self.credential()?).await?)
+                output(bili::watch_later::get_watch_later(&self.credential()?).await?)
             }
             "get_followings" => {
                 let p: Page = parse(args)?;
-                output(bili::following::get_followings(page(p.page)?, self.credential()?).await?)
+                output(bili::following::get_followings(page(p.page)?, &self.credential()?).await?)
             }
             "get_followers" => {
                 let p: Followers = parse(args)?;
@@ -652,7 +700,7 @@ impl QueryService {
                     bili::following::get_followers(
                         input::positive(p.mid, "mid")?,
                         page(p.page)?,
-                        self.credential()?,
+                        &self.credential()?,
                     )
                     .await?,
                 )
@@ -664,14 +712,14 @@ impl QueryService {
                         input::bounded(p.follow_type.unwrap_or(1) as u32, 1, 2, "follow_type")?
                             as u8,
                         page(p.page)?,
-                        self.credential()?,
+                        &self.credential()?,
                     )
                     .await?,
                 )
             }
             "get_subscribed_collections" => {
                 let _: Empty = parse(args)?;
-                output(bili::collection::get_subscribed_collections(self.credential()?).await?)
+                output(bili::collection::get_subscribed_collections(&self.credential()?).await?)
             }
             "like_video" => {
                 self.ensure_write()?;
@@ -679,7 +727,7 @@ impl QueryService {
                 input::validate_bvid(&p.bvid)?;
                 let liked = p.like.unwrap_or(true);
                 bili::interaction::like_video(
-                    self.write_credential()?,
+                    &self.write_credential()?,
                     &p.bvid,
                     if liked { 1 } else { 2 },
                 )
@@ -694,7 +742,7 @@ impl QueryService {
                     input::bounded(p.multiply.unwrap_or(1) as u32, 1, 2, "multiply")? as u8;
                 let like_too = p.like_too.unwrap_or(false);
                 bili::interaction::coin_video(
-                    self.write_credential()?,
+                    &self.write_credential()?,
                     &p.bvid,
                     multiply,
                     if like_too { 1 } else { 0 },
@@ -707,21 +755,22 @@ impl QueryService {
                 let p: FavoriteVideo = parse(args)?;
                 let aid = input::validate_bvid(&p.bvid)? as i64;
                 let folder_id = input::positive(p.folder_id, "folder_id")?;
-                bili::interaction::favorite_video(self.write_credential()?, aid, folder_id).await?;
+                bili::interaction::favorite_video(&self.write_credential()?, aid, folder_id)
+                    .await?;
                 Ok(json!({"ok":true,"bvid":p.bvid,"aid":aid,"folder_id":folder_id}))
             }
             "add_watch_later" => {
                 self.ensure_write()?;
                 let p: WatchLaterAdd = parse(args)?;
                 input::validate_bvid(&p.bvid)?;
-                bili::watch_later::add_watch_later(&p.bvid, self.write_credential()?).await?;
+                bili::watch_later::add_watch_later(&p.bvid, &self.write_credential()?).await?;
                 Ok(json!({"ok":true,"bvid":p.bvid}))
             }
             "remove_watch_later" => {
                 self.ensure_write()?;
                 let p: WatchLaterRemove = parse(args)?;
                 input::validate_bvid(&p.bvid)?;
-                bili::watch_later::remove_watch_later(&p.bvid, self.write_credential()?).await?;
+                bili::watch_later::remove_watch_later(&p.bvid, &self.write_credential()?).await?;
                 Ok(json!({"ok":true,"bvid":p.bvid}))
             }
             _ => Err(QueryError::new("UNKNOWN_TOOL", "工具不存在")),
@@ -780,7 +829,16 @@ mod tests {
     use super::*;
     #[tokio::test(start_paused = true)]
     async fn queued_queries_timeout_without_leaking_concurrency() {
-        let service = QueryService::new(None, false, 1, 1, Duration::from_millis(50));
+        let service = QueryService::new_with_timeout(
+            None,
+            RuntimeSettings {
+                rate_limit: 1,
+                max_concurrency: 1,
+                timeout_secs: 1,
+                allow_write: false,
+            },
+            Duration::from_millis(50),
+        );
         service
             .call("parse_url", json!({"url":"BV17x411w7KC"}))
             .await
@@ -823,7 +881,15 @@ mod tests {
 
     #[tokio::test]
     async fn write_tools_require_opt_in_and_credentials() {
-        let service = QueryService::new(None, true, 0, 4, Duration::from_secs(1));
+        let service = QueryService::new(
+            None,
+            RuntimeSettings {
+                rate_limit: 0,
+                max_concurrency: 4,
+                timeout_secs: 1,
+                allow_write: true,
+            },
+        );
         assert!(service.allow_write());
         assert_eq!(
             service
@@ -843,9 +909,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn settings_update_is_hot_except_concurrency() {
+        let service = QueryService::new(
+            None,
+            RuntimeSettings {
+                rate_limit: 2,
+                max_concurrency: 4,
+                timeout_secs: 45,
+                allow_write: false,
+            },
+        );
+        assert!(!service.restart_required());
+        let mut settings = service.settings();
+        settings.allow_write = true;
+        settings.rate_limit = 5;
+        service.update_settings(settings).unwrap();
+        assert!(service.allow_write());
+        assert_eq!(service.tools().len(), 40);
+        let mut settings = service.settings();
+        settings.max_concurrency = 8;
+        service.update_settings(settings).unwrap();
+        assert!(service.restart_required());
+    }
+
     #[tokio::test]
     async fn invalid_arguments_are_rejected_before_network() {
-        let service = QueryService::new(None, false, 0, 4, Duration::from_secs(1));
+        let service = QueryService::new(
+            None,
+            RuntimeSettings {
+                rate_limit: 0,
+                max_concurrency: 4,
+                timeout_secs: 1,
+                allow_write: false,
+            },
+        );
         for (name, args) in [
             ("search_videos", json!({"keyword":"test","page":0})),
             ("get_video_comments", json!({"bvid":"invalid"})),

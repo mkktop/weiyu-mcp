@@ -1,0 +1,13 @@
+# CI-only runtime image. The binary is built by cargo-zigbuild as a static
+# musl executable, so this image needs no libc or package manager.
+FROM gcr.io/distroless/static-debian12:nonroot
+
+ARG TARGETARCH
+
+COPY deploy/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY bin/${TARGETARCH}/weiyu-mcp /usr/local/bin/weiyu-mcp
+
+EXPOSE 8787
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/weiyu-mcp"]
+CMD ["serve", "--listen", "0.0.0.0:8787"]

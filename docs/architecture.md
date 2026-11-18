@@ -7,7 +7,7 @@
 非目标：
 
 - 不做下载、批量下载、订阅追更、播放器、本地数据库。
-- 不提供登录扫码、验证码交互；登录态由服务器管理员通过 Cookie 文件提供。
+- 登录扫码只在管理台完成，不作为 MCP 工具暴露；验证码交互仍不做。
 - 不把 B 站 Cookie 暴露给 AI 工具参数或返回值。
 
 ## 仓库边界
@@ -32,16 +32,19 @@ scripts/sync-core.sh /path/to/bilbili_copy
 ## 运行时分层
 
 ```
-AI 客户端
-  │ stdio MCP / Streamable HTTP + Bearer
+AI 客户端 / 浏览器
+  │ stdio MCP / Streamable HTTP + Bearer / /admin
   ▼
 weiyu-mcp
-  ├─ main.rs        CLI 参数、子命令、启动校验
-  ├─ config        WEIYU_* 环境变量 / clap 参数
-  ├─ mcp.rs        rmcp ServerHandler，工具列举与调用
-  ├─ http.rs       axum 路由、Bearer、Host/Origin、优雅退出
-  ├─ query.rs      工具注册表、参数校验、限速/并发/超时
-  └─ input.rs      Cookie 文件、链接校验、字幕 URL 白名单
+  ├─ main.rs         CLI 参数、子命令、启动校验
+  ├─ auth.rs         MCP/admin Bearer 校验
+  ├─ mcp.rs          rmcp ServerHandler，工具列举与调用
+  ├─ http.rs         axum 路由、Host/Origin、优雅退出
+  ├─ admin.rs        /admin 静态页 + 管理 API（扫码登录、设置）
+  ├─ settings.rs     settings.json 读写、运行设置
+  ├─ cookie_store.rs 数据目录 Cookie / 只读回退
+  ├─ query.rs        工具注册表、参数校验、限速/并发/超时
+  └─ input.rs        链接校验、字幕 URL 白名单
         │
         ▼
 weiyu-core
@@ -49,12 +52,13 @@ weiyu-core
   danmaku / article / favorite / history / interaction ...
 ```
 
-三种入口（JSON CLI、stdio MCP、HTTP MCP）共用 `query::tools()` 和 `QueryService::call()`，不维护第二套工具定义。
+三种入口（JSON CLI、stdio MCP、HTTP MCP）共用 `query::tools()` 和 `QueryService::call()`，不维护第二套工具定义。管理台使用同一份 `QueryService`，扫码登录和设置修改会热更新内存状态。
 
 ## 工具注册与写入门控
 
 - 只读工具：35 个，始终注册。
-- 互动写入工具：5 个，只有 `--allow-write` 或 `WEIYU_ALLOW_WRITE=true` 时才加入目录。
+- 互动写入工具：5 个，只有运行设置 `allow_write=true` 时才加入目录。
+- 运行设置来自 `$WEIYU_DATA_DIR/settings.json`；管理台修改后即时生效（并发数需重启）。
 - 未开启时，写入工具不会出现在 `tools/list`，直接调用返回 `UNKNOWN_TOOL`。
 - 开启后仍要求 Cookie 含 `bili_jct`；缺少 CSRF 字段返回 `AUTH_REQUIRED`。
 - 写入工具都通过 `weiyu-core` 的 `interaction_post()`，统一处理 Cookie、csrf、Origin 和风控响应。
@@ -65,17 +69,19 @@ weiyu-core
 
 | 面 | 措施 |
 | --- | --- |
-| HTTP 访问 | 至少 32 字符 Bearer，常量时间比较 |
+| MCP 访问 | 至少 32 字符 Bearer，常量时间比较 |
+| 管理台 | 独立 admin Bearer，与 MCP 令牌分离；未配置时管理台禁用 |
 | Host | 默认只允许本机；对外必须显式 `--allowed-host` |
 | Origin | 默认拒绝所有带 Origin 的浏览器请求 |
-| 请求体 | 1 MiB 上限 |
+| 请求体 | MCP 1 MiB；管理 API 64 KiB |
 | 查询并发 | 默认 4，满时返回 `BUSY` |
 | 查询超时 | 默认 45 秒 |
 | 结果大小 | 2 MiB 上限 |
 | 限速 | 默认每秒 2 次工具查询 |
-| Cookie | 只从管理员文件读取，不通过工具参数传入，不写日志 |
+| Cookie | 只从数据目录或管理员文件读取，不通过工具参数传入，不写日志 |
+| 数据目录 | 容器以 nonroot 运行，`/data` 是唯一可写挂载；systemd 用 `ReadWritePaths` |
 | URL | 链接和字幕 URL 做域名/协议/端口白名单，防 SSRF |
-| 写入 | 默认不注册；需显式开启且 Cookie 含 `bili_jct` |
+| 写入 | 默认不注册；需在管理台开启且 Cookie 含 `bili_jct` |
 
 ## B 站风控
 
@@ -89,12 +95,21 @@ weiyu-core
 
 - **静态二进制**：`cargo zigbuild` 产出 `aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`。
 - **systemd**：只监听 `127.0.0.1:8787`，由 Caddy/Nginx 终止 TLS。
-- **Docker**：distroless + nonroot + `read_only` + `cap_drop: ALL`，Cookie/令牌通过 secrets 挂载。
+- **Docker**：distroless + nonroot + `read_only` + `cap_drop: ALL`；Cookie/令牌通过 secrets 挂载，`/data` 是可写卷。
+- **CI 镜像**：GitHub Actions 用预编译静态二进制构建多架构镜像并推送到 GHCR，服务器只需 `docker pull`，不在本机编译。
+
+## 管理台与扫码登录
+
+- `GET /admin` 返回嵌入二进制的单页管理界面；`/admin/api/*` 需要 `WEIYU_ADMIN_TOKEN`。
+- 扫码登录：`POST /admin/api/login/qrcode` 调 B 站生成二维码并返回 SVG；`GET /admin/api/login/poll?key=...` 轮询状态。
+- 登录成功后把 Cookie 写入 `$WEIYU_DATA_DIR/bilibili.cookie`（原子写、0600），同时替换 `QueryService` 内存凭据，MCP 下一次调用立即使用新 Cookie。
+- 退出登录写入空 Cookie 文件作为标记，避免只读回退 Cookie 在重启后重新生效。
+- 设置保存到 `settings.json`；限速、超时、写入开关热更新，并发数变更提示重启。
 
 ## 当前未实现（后续可加）
 
 1. **响应裁剪层**：现在部分工具返回完整结构体，token 消耗偏大；后续可按工具做字段精简和长文本截断。
-2. **Cookie 热加载**：现在更新 Cookie 需要重启；后续可按 mtime 自动重载或支持 SIGHUP。
-3. **多令牌/配额**：现在单个 Bearer 令牌；多 AI 客户端场景可加命名令牌和每令牌限速。
-4. **指标**：`/healthz` 已提供基础信息，尚未暴露 Prometheus 指标。
-5. **OAuth**：远程 MCP 目前只支持静态 Bearer；需要动态授权时再评估 OAuth 2.1。
+2. **多令牌/配额**：现在 MCP 和 admin 各一个静态令牌；多 AI 客户端场景可加命名令牌和每令牌限速。
+3. **指标**：`/healthz` 已提供基础信息，尚未暴露 Prometheus 指标。
+4. **OAuth**：远程 MCP 目前只支持静态 Bearer；需要动态授权时再评估 OAuth 2.1。
+5. **管理台令牌轮换**：目前修改 admin token 需要更新 secret 并重启。

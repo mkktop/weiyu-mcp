@@ -1,24 +1,16 @@
-use crate::{mcp::QueryServer, query::QueryService};
-use axum::{
-    body::Body,
-    extract::{Request, State},
-    http::{header, StatusCode},
-    middleware::{self, Next},
-    response::{IntoResponse, Response},
-    routing::get,
-    Json, Router,
-};
+use crate::{admin, auth, mcp::QueryServer, query::QueryService};
+use axum::{http::StatusCode, middleware, response::IntoResponse, routing::get, Json, Router};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
 use serde_json::json;
-use std::{error::Error as _, sync::Arc};
-use subtle::ConstantTimeEq;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 pub fn router(
     service: Arc<QueryService>,
     token: String,
+    admin: Option<admin::AdminState>,
     hosts: Vec<String>,
     origins: Vec<String>,
     cancel: CancellationToken,
@@ -40,49 +32,34 @@ pub fn router(
     );
     let protected = Router::new()
         .nest_service("/mcp", mcp)
-        .layer(middleware::from_fn_with_state(Arc::new(token), authorize));
-    Router::new().route("/healthz",get(||async{Json(json!({"status":"ok","service":"weiyu-mcp","version":env!("CARGO_PKG_VERSION")}))})).merge(protected)
+        .layer(middleware::from_fn_with_state(
+            Arc::new(token),
+            auth::authorize,
+        ));
+    let mut app = Router::new()
+        .route(
+            "/healthz",
+            get(|| async {
+                Json(json!({"status":"ok","service":"weiyu-mcp","version":env!("CARGO_PKG_VERSION")}))
+            }),
+        )
+        .merge(protected);
+    match admin {
+        Some(admin) => app = app.merge(admin::router(admin)),
+        None => {
+            app = app
+                .route("/admin", get(admin_disabled))
+                .route("/admin/", get(admin_disabled));
+        }
+    }
+    app
 }
 
-async fn authorize(
-    State(token): State<Arc<String>>,
-    request: Request<Body>,
-    next: Next,
-) -> Response {
-    let provided = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.split_once(' '))
-        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
-        .map(|(_, value)| value);
-    if provided.is_some_and(|value| bool::from(value.as_bytes().ct_eq(token.as_bytes()))) {
-        if request.method() == axum::http::Method::POST {
-            let (parts, body) = request.into_parts();
-            let body = match axum::body::to_bytes(body, 1024 * 1024).await {
-                Ok(bytes) => Body::from(bytes),
-                Err(error) => {
-                    let status = if error
-                        .source()
-                        .is_some_and(|source| source.is::<http_body_util::LengthLimitError>())
-                    {
-                        StatusCode::PAYLOAD_TOO_LARGE
-                    } else {
-                        StatusCode::BAD_REQUEST
-                    };
-                    return (status, Json(json!({"error":"invalid_request_body"}))).into_response();
-                }
-            };
-            return next.run(Request::from_parts(parts, body)).await;
-        }
-        return next.run(request).await;
-    }
+async fn admin_disabled() -> impl IntoResponse {
     (
-        StatusCode::UNAUTHORIZED,
-        [(header::WWW_AUTHENTICATE, "Bearer realm=\"weiyu-mcp\"")],
-        Json(json!({"error":"unauthorized"})),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "管理台未启用：请配置 WEIYU_ADMIN_TOKEN 或 --admin-token-file 后重启服务。",
     )
-        .into_response()
 }
 
 pub async fn shutdown_signal() {

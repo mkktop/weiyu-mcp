@@ -107,16 +107,43 @@ stdio 客户端：
 }
 ```
 
+## 管理台（WebUI）
+
+`serve` 模式在 `/admin` 提供管理台，使用**独立于 MCP 的 admin token**：
+
+```bash
+umask 077
+openssl rand -hex 32 > admin-token
+weiyu-mcp serve \
+  --listen 127.0.0.1:8787 \
+  --token-file ./mcp-token \
+  --admin-token-file ./admin-token \
+  --data-dir ./data
+```
+
+- 浏览器打开 `http://127.0.0.1:8787/admin`，输入 admin token 进入。
+- 功能：B 站扫码登录、验证登录态、退出登录、限速/并发/超时/写入开关。
+- 扫码成功后 Cookie 写入 `$WEIYU_DATA_DIR/bilibili.cookie`，并立即热更新内存凭据，不需要重启。
+- `$WEIYU_DATA_DIR/settings.json` 保存运行设置；文件存在后以文件为准，CLI/环境变量只作为首次启动的初始值。
+- 限速、超时、写入开关即时生效；**并发数修改需要重启容器**（信号量在启动时创建）。
+- 未配置 admin token 时管理台禁用，`/mcp` 不受影响。
+
+数据目录建议：
+
+| 场景 | `WEIYU_DATA_DIR` |
+| --- | --- |
+| systemd | `/var/lib/weiyu`（属主为服务用户） |
+| Docker | `/data`（挂载可写卷） |
+| 本地试用 | `./data` |
+
 ## 互动写入（默认关闭）
 
 写入工具会修改真实 B 站账号。默认不注册，AI 在 `tools/list` 中看不到它们。
 
-开启方式（二选一）：
+开启方式（任选其一）：
 
-```bash
-weiyu-mcp --allow-write serve ...
-WEIYU_ALLOW_WRITE=true weiyu-mcp serve ...
-```
+- 管理台 → 勾选“启用互动写入工具” → 保存（即时生效）。
+- 首次启动时 `weiyu-mcp --allow-write serve ...` 或 `WEIYU_ALLOW_WRITE=true`；如果 `settings.json` 已存在，以文件值为准。
 
 开启后增加 5 个工具：
 
@@ -156,7 +183,11 @@ WEIYU_ALLOW_WRITE=true weiyu-mcp serve ...
 ```bash
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin weiyu
 sudo install -d -o weiyu -g weiyu -m 0700 /etc/weiyu
+sudo install -d -o weiyu -g weiyu -m 0700 /var/lib/weiyu
 sudo install -o weiyu -g weiyu -m 0600 mcp-token /etc/weiyu/mcp-token
+sudo sh -c 'openssl rand -hex 32 > /etc/weiyu/admin-token'
+sudo chown weiyu:weiyu /etc/weiyu/admin-token
+sudo chmod 0600 /etc/weiyu/admin-token
 sudo install -o weiyu -g weiyu -m 0600 /dev/null /etc/weiyu/bilibili.cookie
 sudo install -m 0644 deploy/weiyu-mcp.service /etc/systemd/system/weiyu-mcp.service
 sudo install -o weiyu -g weiyu -m 0600 deploy/weiyu.env.example /etc/weiyu/weiyu.env
@@ -166,26 +197,46 @@ sudo systemctl enable --now weiyu-mcp
 sudo journalctl -u weiyu-mcp -f
 ```
 
+`/var/lib/weiyu` 保存 `settings.json` 和扫码登录后的 `bilibili.cookie`；service 已通过 `ReadWritePaths` 允许写入该目录。
+
 Caddy 反向代理示例见 `deploy/Caddyfile.example`。服务只需监听 `127.0.0.1:8787`，由 Caddy/Nginx 终止 TLS。
 
 ## Docker / Compose
 
 ```bash
 cd deploy
-mkdir -m 0700 secrets
+mkdir -m 0700 secrets data
 openssl rand -hex 32 > secrets/mcp-token
+openssl rand -hex 32 > secrets/admin-token
 touch secrets/bilibili.cookie
-chmod 0644 secrets/mcp-token secrets/bilibili.cookie
-cp .env.example .env   # 修改 WEIYU_PUBLIC_HOST / WEIYU_ALLOW_WRITE
+chmod 0644 secrets/mcp-token secrets/admin-token secrets/bilibili.cookie
+# 容器以 UID 65532 运行，需要可写 data 目录
+sudo chown -R 65532:65532 data
+cp .env.example .env   # 修改 WEIYU_PUBLIC_HOST / WEIYU_IMAGE / WEIYU_ALLOW_WRITE
 docker compose up -d --build
 docker compose logs -f
 ```
 
-服务绑定宿主机 `127.0.0.1:8787`，容器使用 distroless + nonroot + 只读根文件系统。Cookie 留空即匿名运行。
+服务绑定宿主机 `127.0.0.1:8787`，容器使用 distroless + nonroot + 只读根文件系统；`./data` 挂载为唯一可写目录。Cookie 留空即匿名运行，之后可在 `/admin` 扫码登录。
+
+### 使用 GitHub Actions 构建的镜像
+
+仓库的 `Release` workflow 会用 `cargo zigbuild` 产出 arm64/x86_64 静态二进制，并构建多架构镜像推送到 GHCR：
+
+```bash
+docker pull ghcr.io/<owner>/weiyu-mcp:latest
+# 在 deploy/.env 中设置：
+# WEIYU_IMAGE=ghcr.io/<owner>/weiyu-mcp:latest
+docker compose up -d --no-build
+```
+
+- 公开仓库的 GHCR 包默认可能仍是私有；在 GitHub → Packages → Package settings 中设为 Public，或先 `docker login ghcr.io`（PAT 需要 `read:packages`）。
+- 版本 tag 会同时生成 `:x.y.z` 和 `:latest`，分支构建生成 `:edge`。
 
 构建注意事项：
 
-- 运行镜像默认是 `gcr.io/distroless/cc-debian12:nonroot`。无法直连 GCR 时，用 `RUNTIME_IMAGE` 指定镜像加速器地址，例如 `gcr.m.daocloud.io/distroless/cc-debian12:nonroot`。
+- 本地直接 `docker compose build` 使用 `deploy/Dockerfile`；CI 镜像是 `deploy/Dockerfile.ci`，只复制预编译的静态二进制，不在 Docker 里编译。
+- 本地构建镜像默认是 `gcr.io/distroless/cc-debian12:nonroot`。无法直连 GCR 时，用 `RUNTIME_IMAGE` 指定镜像加速器地址，例如 `gcr.m.daocloud.io/distroless/cc-debian12:nonroot`。
 - distroless 不含 CA 证书，Dockerfile 会从 builder 复制 `/etc/ssl/certs`；缺少时 B 站 HTTPS 请求会失败。
 - 宿主关闭了 Docker iptables（`daemon.json` 里 `"iptables": false`）时，自定义 bridge 的 DNS/NAT 不可用；compose 已设置 `network_mode: bridge`。
 - 没有安装 buildx 的宿主可用经典 builder：`DOCKER_BUILDKIT=0 docker build ...`。首次在 4 核 ARM 上编译约 30–40 分钟；小内存机器保持 `CARGO_BUILD_JOBS=2`，内存充足可调到 4。
@@ -195,15 +246,19 @@ docker compose logs -f
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `WEIYU_COOKIE_FILE` | 无 | 单行 Cookie 文件；为空表示匿名 |
-| `WEIYU_ALLOW_WRITE` | `false` | 是否注册互动写入工具 |
-| `WEIYU_MCP_TOKEN` / `WEIYU_MCP_TOKEN_FILE` | 无 | HTTP Bearer 令牌，至少 32 字符 |
+| `WEIYU_DATA_DIR` | 无 | 可写数据目录；存放 `settings.json` 和扫码登录后的 `bilibili.cookie` |
+| `WEIYU_COOKIE_FILE` | 无 | 只读 Cookie 回退文件；数据目录 Cookie 优先 |
+| `WEIYU_ADMIN_TOKEN` / `WEIYU_ADMIN_TOKEN_FILE` | 无 | 管理台令牌，至少 32 字符；未配置时管理台禁用 |
+| `WEIYU_ALLOW_WRITE` | `false` | 首次启动的写入开关；`settings.json` 存在后以文件为准 |
+| `WEIYU_MCP_TOKEN` / `WEIYU_MCP_TOKEN_FILE` | 无 | HTTP MCP Bearer 令牌，至少 32 字符 |
 | `WEIYU_LISTEN` | `127.0.0.1:8787` | HTTP 监听地址 |
 | `WEIYU_ALLOWED_HOSTS` | 本机 | 逗号分隔的允许 Host |
 | `WEIYU_ALLOWED_ORIGINS` | 空 | 逗号分隔的允许 Origin |
-| `WEIYU_RATE_LIMIT` | `2` | 每秒工具查询数，0 表示不限 |
-| `WEIYU_MAX_CONCURRENCY` | `4` | 最大并发 |
-| `WEIYU_TIMEOUT_SECS` | `45` | 单次查询超时 |
+| `WEIYU_RATE_LIMIT` | `2` | 首次启动的每秒查询数，0 表示不限 |
+| `WEIYU_MAX_CONCURRENCY` | `4` | 首次启动的最大并发 |
+| `WEIYU_TIMEOUT_SECS` | `45` | 首次启动的单次查询超时 |
+
+Compose 额外变量：`WEIYU_IMAGE`（镜像地址）、`WEIYU_PUBLIC_HOST`（允许的对外 Host）、`RUNTIME_IMAGE` / `CARGO_*`（构建参数）。
 
 ## 开发与测试
 
@@ -242,7 +297,8 @@ git diff -- crates/weiyu-core UPSTREAM.md
 | 查询 | 有 | 有（35 个只读） |
 | 点赞/投币/收藏/稍后再看 | 有 | 可选（默认关闭） |
 | 下载、批量下载、订阅追更 | 有 | 无 |
-| 本地数据库、播放进度、设置 | 有 | 无 |
-| 登录扫码、验证码 | 有 | 无（Cookie 由管理员提供） |
+| 本地数据库、播放进度、设置 | 有 | 无（运行设置存 `settings.json`） |
+| 登录扫码、验证码 | 有 | 管理台支持扫码登录；无验证码交互 |
+| Web 管理台 | 无 | 有（`/admin`） |
 | 远程 HTTP MCP | 无 | 有 |
 | 部署环境 | Windows 桌面 | Linux systemd / Docker |

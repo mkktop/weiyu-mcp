@@ -3,6 +3,8 @@
 **/*.rs.bk
 __pycache__/
 *.pyc
+deploy/ca-certificates.crt
+data/
 .env
 secrets/
 mcp-token

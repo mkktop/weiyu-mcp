@@ -12,6 +12,7 @@ axum = "0.8"
 http-body-util = "0.1"
 clap = { version = "4", features = ["derive", "env"] }
 log = "0.4"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 rmcp = { version = "3", features = ["server", "transport-io", "transport-streamable-http-server"] }
 schemars = "1"
@@ -22,3 +23,6 @@ tokio = { version = "1", features = ["full", "test-util"] }
 tokio-util = "0.7"
 tower = { version = "0.5", features = ["limit", "util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"

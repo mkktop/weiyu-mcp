@@ -7,6 +7,7 @@ import re
 import secrets
 import selectors
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -35,14 +36,22 @@ def main():
     for name in [
         "WEIYU_COOKIE_FILE",
         "WEIYU_MCP_TOKEN_FILE",
+        "WEIYU_ADMIN_TOKEN",
+        "WEIYU_ADMIN_TOKEN_FILE",
+        "WEIYU_DATA_DIR",
         "WEIYU_ALLOWED_HOSTS",
         "WEIYU_ALLOWED_ORIGINS",
         "WEIYU_ALLOW_WRITE",
     ]:
         env.pop(name, None)
     token = secrets.token_hex(32)
+    admin_token = secrets.token_hex(32)
     env["WEIYU_MCP_TOKEN"] = token
+    env["WEIYU_ADMIN_TOKEN"] = admin_token
     env["WEIYU_RATE_LIMIT"] = "0"
+    data_dir = tempfile.TemporaryDirectory(prefix="weiyu-smoke-")
+    server_env = env.copy()
+    server_env["WEIYU_DATA_DIR"] = data_dir.name
 
     version = subprocess.check_output(prefix + ["--version"], env=env, timeout=20).decode().strip()
     catalog = json.loads(subprocess.check_output(prefix + ["tools"], env=env, timeout=20))
@@ -107,7 +116,7 @@ def main():
 
     server = subprocess.Popen(
         prefix + ["serve", "--listen", "127.0.0.1:0"],
-        env=env,
+        env=server_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -126,6 +135,25 @@ def main():
         health = json.loads(opener.open(base + "/healthz", timeout=10).read())
         assert health["status"] == "ok"
         assert health["service"] == "weiyu-mcp"
+        admin_page = opener.open(base + "/admin", timeout=10).read().decode()
+        assert "未雨" in admin_page and "扫码" in admin_page
+        try:
+            opener.open(base + "/admin/api/status", timeout=10)
+            raise AssertionError("Unauthenticated admin request was accepted")
+        except urllib.error.HTTPError as error:
+            assert error.code == 401
+        admin_status = json.loads(
+            opener.open(
+                urllib.request.Request(
+                    base + "/admin/api/status",
+                    headers={"Authorization": "Bearer " + admin_token},
+                ),
+                timeout=10,
+            ).read()
+        )
+        assert admin_status["read_tools"] == 35
+        assert admin_status["write_tools"] == 40
+        assert admin_status["persistence"] is True
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
@@ -168,6 +196,7 @@ def main():
                     "write_tools": 40,
                     "stdio": "passed",
                     "http": "passed",
+                    "admin": "passed",
                     "sigterm": "passed",
                     "live_bilibili": args.live,
                 }
