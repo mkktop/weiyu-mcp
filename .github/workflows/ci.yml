@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - "crates/**"
+      - "Cargo.*"
+      - "scripts/**"
+      - "deploy/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.*"
+      - "scripts/**"
+      - "deploy/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt -p weiyu-mcp --check
+      - name: Clippy
+        run: cargo clippy -p weiyu-mcp --all-targets --no-deps -- -D warnings
+      - name: Test shared core and MCP transports
+        run: cargo test --workspace --no-default-features --locked
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-musl
+            platform: linux-arm64
+          - target: x86_64-unknown-linux-musl
+            platform: linux-x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install portable cross compiler
+        run: pip install cargo-zigbuild==0.24.0 ziglang==0.14.1
+      - name: Build static Linux binary
+        run: cargo zigbuild --locked --release -p weiyu-mcp --target ${{ matrix.target }}
+      - name: Run packaged binary and MCP smoke checks
+        shell: bash
+        run: |
+          if [[ "${{ matrix.platform }}" == "linux-arm64" ]]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y qemu-user
+            python scripts/smoke.py target/${{ matrix.target }}/release/weiyu-mcp --runner qemu-aarch64
+          else
+            python scripts/smoke.py target/${{ matrix.target }}/release/weiyu-mcp
+          fi
+      - name: Package executable and deployment files
+        run: bash scripts/package.sh ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: weiyu-mcp-${{ matrix.platform }}
+          path: artifacts/weiyu-mcp-${{ matrix.platform }}.tar.gz*
+          if-no-files-found: error

@@ -1,0 +1,7 @@
+target
+artifacts
+.git
+.github
+deploy/secrets
+*.md
+!README.md

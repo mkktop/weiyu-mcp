@@ -1,0 +1,10 @@
+/target
+/artifacts
+**/*.rs.bk
+__pycache__/
+*.pyc
+.env
+secrets/
+mcp-token
+bilibili.cookie
+credentials.json

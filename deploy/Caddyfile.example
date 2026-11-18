@@ -1,0 +1,5 @@
+# Replace mcp.example.com with your own domain.
+# Terminate TLS here; weiyu-mcp only listens on 127.0.0.1:8787.
+mcp.example.com {
+    reverse_proxy 127.0.0.1:8787
+}

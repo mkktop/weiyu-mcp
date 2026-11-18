@@ -1,0 +1,100 @@
+# 架构说明
+
+## 目标
+
+把 B 站 MCP 能力从 Windows 桌面应用中拆出来，作为一个可独立构建、部署在 Linux 服务器上的 AI 查询服务。
+
+非目标：
+
+- 不做下载、批量下载、订阅追更、播放器、本地数据库。
+- 不提供登录扫码、验证码交互；登录态由服务器管理员通过 Cookie 文件提供。
+- 不把 B 站 Cookie 暴露给 AI 工具参数或返回值。
+
+## 仓库边界
+
+```
+weiyu-mcp/
+├─ crates/weiyu-core/    # 从主仓库复制的 B 站 API 实现
+├─ crates/weiyu-mcp/     # 服务器运行时：配置、工具、传输、鉴权
+├─ deploy/               # Docker / Compose / systemd / Caddy
+├─ scripts/              # 打包、smoke、同步 core
+└─ .github/workflows/    # CI / Release
+```
+
+`weiyu-core` 是复制而不是 git/path 依赖，目的是让服务器工程可以独立构建、独立发版、独立修改。代价是需要同步：
+
+```bash
+scripts/sync-core.sh /path/to/bilbili_copy
+```
+
+同步后必须跑 `cargo test --workspace`。如果服务器需要 core 里没有的能力，先在主仓库实现，再同步，避免只在新仓库改导致桌面端与服务器端行为分叉。
+
+## 运行时分层
+
+```
+AI 客户端
+  │ stdio MCP / Streamable HTTP + Bearer
+  ▼
+weiyu-mcp
+  ├─ main.rs        CLI 参数、子命令、启动校验
+  ├─ config        WEIYU_* 环境变量 / clap 参数
+  ├─ mcp.rs        rmcp ServerHandler，工具列举与调用
+  ├─ http.rs       axum 路由、Bearer、Host/Origin、优雅退出
+  ├─ query.rs      工具注册表、参数校验、限速/并发/超时
+  └─ input.rs      Cookie 文件、链接校验、字幕 URL 白名单
+        │
+        ▼
+weiyu-core
+  wbi 签名 / 风控 / video / search / comment / subtitle /
+  danmaku / article / favorite / history / interaction ...
+```
+
+三种入口（JSON CLI、stdio MCP、HTTP MCP）共用 `query::tools()` 和 `QueryService::call()`，不维护第二套工具定义。
+
+## 工具注册与写入门控
+
+- 只读工具：35 个，始终注册。
+- 互动写入工具：5 个，只有 `--allow-write` 或 `WEIYU_ALLOW_WRITE=true` 时才加入目录。
+- 未开启时，写入工具不会出现在 `tools/list`，直接调用返回 `UNKNOWN_TOOL`。
+- 开启后仍要求 Cookie 含 `bili_jct`；缺少 CSRF 字段返回 `AUTH_REQUIRED`。
+- 写入工具都通过 `weiyu-core` 的 `interaction_post()`，统一处理 Cookie、csrf、Origin 和风控响应。
+
+这样设计的原因是：MCP 客户端通常会把 `tools/list` 的全部工具交给模型。如果写入工具只是“调用时拒绝”，模型仍会看到并尝试调用；直接从目录中移除，才是真正的默认关闭。
+
+## 安全模型
+
+| 面 | 措施 |
+| --- | --- |
+| HTTP 访问 | 至少 32 字符 Bearer，常量时间比较 |
+| Host | 默认只允许本机；对外必须显式 `--allowed-host` |
+| Origin | 默认拒绝所有带 Origin 的浏览器请求 |
+| 请求体 | 1 MiB 上限 |
+| 查询并发 | 默认 4，满时返回 `BUSY` |
+| 查询超时 | 默认 45 秒 |
+| 结果大小 | 2 MiB 上限 |
+| 限速 | 默认每秒 2 次工具查询 |
+| Cookie | 只从管理员文件读取，不通过工具参数传入，不写日志 |
+| URL | 链接和字幕 URL 做域名/协议/端口白名单，防 SSRF |
+| 写入 | 默认不注册；需显式开启且 Cookie 含 `bili_jct` |
+
+## B 站风控
+
+服务器出口 IP 比家庭宽带更容易触发验证。服务不会尝试绕过验证码；触发时返回可读错误，由管理员更新 Cookie 或在桌面应用完成验证后重试。建议：
+
+- 使用专用账号和可快速更新的 Cookie。
+- 保持较低 `WEIYU_RATE_LIMIT`。
+- 必要时为服务器配置固定的出口代理，避免 IP 频繁变化。
+
+## 部署形态
+
+- **静态二进制**：`cargo zigbuild` 产出 `aarch64-unknown-linux-musl` / `x86_64-unknown-linux-musl`。
+- **systemd**：只监听 `127.0.0.1:8787`，由 Caddy/Nginx 终止 TLS。
+- **Docker**：distroless + nonroot + `read_only` + `cap_drop: ALL`，Cookie/令牌通过 secrets 挂载。
+
+## 当前未实现（后续可加）
+
+1. **响应裁剪层**：现在部分工具返回完整结构体，token 消耗偏大；后续可按工具做字段精简和长文本截断。
+2. **Cookie 热加载**：现在更新 Cookie 需要重启；后续可按 mtime 自动重载或支持 SIGHUP。
+3. **多令牌/配额**：现在单个 Bearer 令牌；多 AI 客户端场景可加命名令牌和每令牌限速。
+4. **指标**：`/healthz` 已提供基础信息，尚未暴露 Prometheus 指标。
+5. **OAuth**：远程 MCP 目前只支持静态 Bearer；需要动态授权时再评估 OAuth 2.1。
