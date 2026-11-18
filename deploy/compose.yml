@@ -1,6 +1,6 @@
 services:
   weiyu-mcp:
-    image: ${WEIYU_IMAGE:-weiyu-mcp:0.2.3}
+    image: ${WEIYU_IMAGE:-weiyu-mcp:0.2.4}
     # Some hosts disable Docker's iptables management, which breaks DNS/NAT on
     # user-defined bridges. The default bridge keeps port mapping and works there.
     network_mode: bridge

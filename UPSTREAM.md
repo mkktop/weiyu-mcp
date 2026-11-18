@@ -4,7 +4,7 @@
 
 - Repository: https://github.com/mkktop/bilbili_copy
 - Source path: `crates/weiyu-core`
-- Copied from commit: `4ac669e` (`4ac669e958e75c47f8f91051a66f125153eb7cb3`)
+- Copied from commit: `56a5556` (`56a555656815c4318887830746fc9f53d8c599ec`)
 
 The copy is intentional: this project must build and deploy independently of the
 desktop application. Keep the copy in sync with:
