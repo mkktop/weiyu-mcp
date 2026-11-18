@@ -14,7 +14,8 @@ services:
         CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${CARGO_PROFILE_RELEASE_CODEGEN_UNITS:-1}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8787:8787"
+      # 默认只绑本机；需要局域网直接访问时设 WEIYU_BIND_ADDR=0.0.0.0
+      - "${WEIYU_BIND_ADDR:-127.0.0.1}:8787:8787"
     environment:
       WEIYU_MCP_TOKEN_FILE: /run/secrets/mcp_token
       WEIYU_ADMIN_TOKEN_FILE: /run/secrets/admin_token

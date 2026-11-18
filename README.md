@@ -217,7 +217,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-服务绑定宿主机 `127.0.0.1:8787`，容器使用 distroless + nonroot + 只读根文件系统；`./data` 挂载为唯一可写目录。Cookie 留空即匿名运行，之后可在 `/admin` 扫码登录。
+服务默认绑定宿主机 `127.0.0.1:8787`；需要局域网直接访问时在 `.env` 设置 `WEIYU_BIND_ADDR=0.0.0.0`。容器使用 distroless + nonroot + 只读根文件系统；`./data` 挂载为唯一可写目录。Cookie 留空即匿名运行，之后可在 `/admin` 扫码登录。
 
 ### 使用 GitHub Actions 构建的镜像
 
@@ -258,7 +258,7 @@ docker compose up -d --no-build
 | `WEIYU_MAX_CONCURRENCY` | `4` | 首次启动的最大并发 |
 | `WEIYU_TIMEOUT_SECS` | `45` | 首次启动的单次查询超时 |
 
-Compose 额外变量：`WEIYU_IMAGE`（镜像地址）、`WEIYU_PUBLIC_HOST`（允许的对外 Host）、`RUNTIME_IMAGE` / `CARGO_*`（构建参数）。
+Compose 额外变量：`WEIYU_IMAGE`（镜像地址）、`WEIYU_PUBLIC_HOST`（允许的对外 Host）、`WEIYU_BIND_ADDR`（默认 `127.0.0.1`，局域网访问设 `0.0.0.0`）、`RUNTIME_IMAGE` / `CARGO_*`（构建参数）。
 
 ## 开发与测试
 

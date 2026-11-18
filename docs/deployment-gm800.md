@@ -14,7 +14,7 @@
 
 - 镜像：`ghcr.io/mkktop/weiyu-mcp:0.2.1`（公开，可匿名拉取）
 - 容器：`weiyu-mcp-weiyu-mcp-1`
-- 端口：`127.0.0.1:8787`
+- 端口：`0.0.0.0:8787`（局域网可访问，`WEIYU_BIND_ADDR=0.0.0.0`）
 - 管理台：`/admin`，扫码登录已可用
 - 版本：`0.2.1`
 - 重启策略：`unless-stopped`
@@ -87,6 +87,7 @@ docker compose logs --tail=50
 COMPOSE_PROJECT_NAME=weiyu-mcp
 WEIYU_IMAGE=ghcr.io/mkktop/weiyu-mcp:0.2.1
 WEIYU_PUBLIC_HOST=192.168.10.97,localhost,127.0.0.1
+WEIYU_BIND_ADDR=0.0.0.0
 WEIYU_RATE_LIMIT=2
 WEIYU_MAX_CONCURRENCY=4
 WEIYU_TIMEOUT_SECS=45
@@ -98,6 +99,7 @@ compose 额外设置：
 - `WEIYU_DATA_DIR=/data`
 - `WEIYU_ADMIN_TOKEN_FILE=/run/secrets/admin_token`
 - `WEIYU_COOKIE_FILE=/run/secrets/bilibili_cookie`（只读回退）
+- `WEIYU_BIND_ADDR=0.0.0.0`：compose 端口映射绑定所有网卡，局域网可直接访问管理台和 MCP。
 - `network_mode: bridge`：宿主 `daemon.json` 配置了 `"iptables": false`，自定义 bridge 的 DNS/NAT 不可用。
 
 ## 验证结果
@@ -114,17 +116,25 @@ status: 35 只读 / 40 含写入，credential_configured=false，persistence=tru
 
 ## 访问管理台
 
-服务只监听 GM800 的 `127.0.0.1:8787`。从 Windows 建 SSH 隧道：
+浏览器直接打开：
 
-```bash
-ssh -L 8787:127.0.0.1:8787 root@192.168.10.97
-```
+**<http://192.168.10.97:8787/admin>**
 
-浏览器打开 <http://127.0.0.1:8787/admin>。管理员令牌：
+管理员令牌：
 
 ```bash
 ssh root@192.168.10.97 'cat /opt/weiyu-mcp/secrets/admin-token'
 ```
+
+如果只想走本机访问，也可以建 SSH 隧道：
+
+```bash
+ssh -L 8787:127.0.0.1:8787 root@192.168.10.97
+# 然后打开 http://127.0.0.1:8787/admin
+```
+
+> 当前是 HTTP 直连，admin/MCP 令牌在局域网内以明文传输。只在可信网络使用；
+> 如果不信任局域网，建议改回 `WEIYU_BIND_ADDR=127.0.0.1` 走 SSH 隧道，或在前面加 Caddy/Nginx 终止 TLS。
 
 进入后：
 
@@ -133,7 +143,7 @@ ssh root@192.168.10.97 'cat /opt/weiyu-mcp/secrets/admin-token'
 3. 点“验证登录态”确认账号。
 4. 在“运行设置”里调整限速/超时/写入开关；并发数修改后需重启容器。
 
-MCP 客户端仍使用 `mcp-token`，连接 `http://127.0.0.1:8787/mcp`。
+MCP 客户端仍使用 `mcp-token`，连接 `http://192.168.10.97:8787/mcp`（或隧道地址 `http://127.0.0.1:8787/mcp`）。
 
 ## 手动更新 Cookie
 
