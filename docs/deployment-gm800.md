@@ -12,11 +12,11 @@
 
 ## 当前状态
 
-- 镜像：`ghcr.io/mkktop/weiyu-mcp:0.2.4`（公开，可匿名拉取）
+- 镜像：`ghcr.io/mkktop/weiyu-mcp:0.3.0`（公开，可匿名拉取）
 - 容器：`weiyu-mcp-weiyu-mcp-1`
 - 端口：`0.0.0.0:8787`（局域网可访问，`WEIYU_BIND_ADDR=0.0.0.0`）
 - 管理台：`/admin`，首次访问设置管理密码（默认 `admin`），扫码登录已可用
-- 版本：`0.2.4`
+- 版本：`0.3.0`
 - 重启策略：`unless-stopped`
 - 运行用户：`nonroot:nonroot`，只读根文件系统，`cap_drop: ALL`
 
@@ -47,7 +47,7 @@
 - `deploy/Dockerfile.ci` 把预编译二进制复制进 `distroless/static-debian12`，不在 Docker 内编译。
 - `docker/build-push-action` 推送多架构镜像到 GHCR。
 - 仓库：<https://github.com/mkktop/weiyu-mcp>
-- Release：<https://github.com/mkktop/weiyu-mcp/releases/tag/v0.2.4>
+- Release：<https://github.com/mkktop/weiyu-mcp/releases/tag/v0.3.0>
 
 `v0.2.0` 的镜像二进制缺少可执行位（artifact 上传丢失 mode），运行时报
 `/usr/local/bin/weiyu-mcp: permission denied`。`v0.2.2` 在 `Dockerfile.ci` 中使用
@@ -59,6 +59,9 @@
 
 `v0.2.4` 补齐错误信息：接口和页面同时失败时同时返回两边原因（如接口 `-404`/风控），
 不再只显示「页面解析也失败」。
+
+`v0.3.0` 新增 `post_comment`：可发表评论、回复评论和 @ 用户（`at_name_to_mid`）。
+由独立设置 `allow_comment` 控制，默认关闭；即使开启互动写入也不会自动开放评论。
 
 ### 初始 0.1.1 本地构建（历史）
 
@@ -79,9 +82,9 @@ distroless 不含 CA 证书，第一次运行时手工追加 CA 层生成了 `0.
 ## 更新镜像
 
 ```bash
-docker pull ghcr.io/mkktop/weiyu-mcp:0.2.4
+docker pull ghcr.io/mkktop/weiyu-mcp:0.3.0
 cd /opt/weiyu-mcp/src/deploy
-sed -i 's#^WEIYU_IMAGE=.*#WEIYU_IMAGE=ghcr.io/mkktop/weiyu-mcp:0.2.4#' .env
+sed -i 's#^WEIYU_IMAGE=.*#WEIYU_IMAGE=ghcr.io/mkktop/weiyu-mcp:0.3.0#' .env
 docker compose up -d --no-build
 docker compose logs --tail=50
 ```
@@ -92,13 +95,14 @@ docker compose logs --tail=50
 
 ```dotenv
 COMPOSE_PROJECT_NAME=weiyu-mcp
-WEIYU_IMAGE=ghcr.io/mkktop/weiyu-mcp:0.2.4
+WEIYU_IMAGE=ghcr.io/mkktop/weiyu-mcp:0.3.0
 WEIYU_PUBLIC_HOST=192.168.10.97,localhost,127.0.0.1
 WEIYU_BIND_ADDR=0.0.0.0
 WEIYU_RATE_LIMIT=2
 WEIYU_MAX_CONCURRENCY=4
 WEIYU_TIMEOUT_SECS=45
 WEIYU_ALLOW_WRITE=false
+WEIYU_ALLOW_COMMENT=false
 ```
 
 compose 额外设置：
@@ -112,7 +116,7 @@ compose 额外设置：
 ## 验证结果
 
 ```text
-health {'service': 'weiyu-mcp', 'status': 'ok', 'version': '0.2.4'}
+health {'service': 'weiyu-mcp', 'status': 'ok', 'version': '0.3.0'}
 /admin 200，管理台密码已设置（needs_setup=false，非默认密码）
 /admin/api/status 无令牌 -> 401；MCP 令牌 -> 401；admin API 令牌 -> 200
 status: 35 只读 / 40 含写入，credential_configured=true（data），persistence=true

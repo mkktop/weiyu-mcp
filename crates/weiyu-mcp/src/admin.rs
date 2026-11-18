@@ -45,8 +45,8 @@ impl AdminState {
             cookie_store,
             auth: AdminAuth::new(data_dir, legacy_admin_token),
             started_at: Instant::now(),
-            read_tool_count: crate::query::tools(false).len(),
-            write_tool_count: crate::query::tools(true).len(),
+            read_tool_count: crate::query::tools(false, false).len(),
+            write_tool_count: crate::query::tools(true, true).len(),
         }
     }
 }
@@ -194,6 +194,7 @@ async fn status(State(state): State<AdminState>) -> Json<Value> {
         "credential_source": state.cookie_store.source().as_str(),
         "write_ready": credential.as_ref().is_some_and(|c| !c.bili_jct.trim().is_empty()),
         "write_enabled": settings.allow_write,
+        "comment_enabled": settings.allow_comment,
         "settings": settings,
         "restart_required": state.service.restart_required(),
         "using_default_password": state.auth.using_default_password(),

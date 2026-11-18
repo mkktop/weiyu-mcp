@@ -28,8 +28,12 @@ GHCR image are built in `.github/workflows/release.yml` (`deploy/Dockerfile.ci`)
 - 35 read-only tools are always registered.
 - 5 interaction tools (`like_video`, `coin_video`, `favorite_video`, `add_watch_later`,
   `remove_watch_later`) are only registered when the runtime setting `allow_write=true`.
+- `post_comment` is gated separately by `allow_comment` (default false), independent of
+  `allow_write`; it supports replies (`parent`/`root`) and real @ mentions (`mentions` →
+  `at_name_to_mid`). Keep it off unless the operator explicitly wants public posting.
 - Runtime settings live in `$WEIYU_DATA_DIR/settings.json`; the admin UI writes them. CLI/env values
-  only seed the file on first start. Rate/timeout/write changes are hot; concurrency needs a restart.
+  only seed the file on first start. Rate/timeout/write/comment changes are hot; concurrency needs a
+  restart.
 - Do not make write tools visible by default. MCP clients send the full `tools/list` to the model;
   hiding them is the safety boundary, not a runtime rejection.
 - Write tools require `bili_jct` in the cookie. Read-only tools can work with `SESSDATA` only.
@@ -43,6 +47,8 @@ GHCR image are built in `.github/workflows/release.yml` (`deploy/Dockerfile.ci`)
 - `WEIYU_ADMIN_TOKEN` / `--admin-token-file` is an optional admin API Bearer for scripts, not the UI
   login credential. Do not route the UI through it.
 - QR login writes `$WEIYU_DATA_DIR/bilibili.cookie` and hot-swaps the in-memory credential.
+- The settings card has two independent switches: interaction writes and comment writes. Comment
+  posting is public and notifies replied/mentioned users; never enable it by default.
 - A data-dir cookie wins over the read-only `WEIYU_COOKIE_FILE` fallback. An empty data-dir cookie is
   a logout marker and suppresses the fallback.
 - Settings/cookie/admin files are written atomically with 0600. Keep the data dir writable only by the

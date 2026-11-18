@@ -89,6 +89,25 @@ params!(FavoriteVideo {
 params!(WatchLaterAdd { bvid: String });
 params!(WatchLaterRemove { bvid: String });
 
+// ==================== 评论写入参数（独立开关，默认不暴露） ====================
+params!(Mention {
+    /// B站用户 mid
+    mid: i64,
+    /// 正文中 @ 的昵称，必须与B站昵称一致
+    name: String
+});
+params!(PostComment {
+    bvid: String,
+    /// 评论正文，最多1000字符
+    message: String,
+    /// 回复目标评论的 rpid；回复一级评论时只需传它，root 会自动等于 parent
+    parent: Option<i64>,
+    /// 楼中楼回复的根评论 rpid；单独提供无效，必须与 parent 同时传
+    root: Option<i64>,
+    /// 需要真实 @ 的用户；正文里必须同时写 @昵称
+    mentions: Option<Vec<Mention>>
+});
+
 fn tool_with<P: JsonSchema>(
     name: &'static str,
     description: &'static str,
@@ -121,9 +140,10 @@ fn write_tool<P: JsonSchema>(
 
 /// Explicit registry shared by the CLI and both MCP transports.
 /// Interaction tools are only included when the operator opts in.
-pub fn tools(allow_write: bool) -> Vec<Tool> {
+pub fn tools(allow_write: bool, allow_comment: bool) -> Vec<Tool> {
     static READ: OnceLock<Vec<Tool>> = OnceLock::new();
     static WRITE: OnceLock<Vec<Tool>> = OnceLock::new();
+    static COMMENT: OnceLock<Vec<Tool>> = OnceLock::new();
     let mut catalog = READ.get_or_init(|| vec![
         tool::<Empty>("get_login_status", "查看服务器是否配置B站Cookie；configured表示已提供凭据，不表示已联网验证。不会返回Cookie。"),
         tool::<Empty>("get_current_user", "联网验证B站登录态，返回当前账号资料；需要Cookie。"),
@@ -190,6 +210,15 @@ pub fn tools(allow_write: bool) -> Vec<Tool> {
             ),
         ]).clone());
     }
+    if allow_comment {
+        catalog.extend(COMMENT.get_or_init(|| vec![
+            write_tool::<PostComment>(
+                "post_comment",
+                "在视频评论区发表评论或回复（真实公开操作：会以账号身份发言，回复和@会给对方发通知）。message最多1000字符；回复评论传parent=rpid，楼中楼再传root；mentions用mid+name把正文里的@昵称变成真实提及。需要包含bili_jct的Cookie，且服务器必须显式开启评论写入。",
+                false,
+            ),
+        ]).clone());
+    }
     catalog
 }
 
@@ -241,6 +270,10 @@ impl QueryService {
         self.settings.read().expect("settings lock").allow_write
     }
 
+    pub fn allow_comment(&self) -> bool {
+        self.settings.read().expect("settings lock").allow_comment
+    }
+
     pub fn restart_required(&self) -> bool {
         self.settings.read().expect("settings lock").max_concurrency as usize
             != self.startup_concurrency
@@ -262,7 +295,7 @@ impl QueryService {
     }
 
     pub fn tools(&self) -> Vec<Tool> {
-        tools(self.allow_write())
+        tools(self.allow_write(), self.allow_comment())
     }
 
     fn credential(&self) -> Result<Credential> {
@@ -281,6 +314,18 @@ impl QueryService {
             Err(QueryError::new(
                 "UNKNOWN_TOOL",
                 "互动写入工具未启用；请在管理台开启写入，或启动时设置 WEIYU_ALLOW_WRITE=true。",
+            ))
+        }
+    }
+
+    /// 评论写入是独立开关：即使 allow_write=true 也不会自动开放发评论。
+    fn ensure_comment(&self) -> Result<()> {
+        if self.allow_comment() {
+            Ok(())
+        } else {
+            Err(QueryError::new(
+                "UNKNOWN_TOOL",
+                "评论工具未启用；请在管理台开启评论写入，或启动时设置 WEIYU_ALLOW_COMMENT=true。",
             ))
         }
     }
@@ -341,8 +386,9 @@ impl QueryService {
                     "configured": credential.is_some(),
                     "verified": false,
                     "write_enabled": self.allow_write(),
+                    "comment_enabled": self.allow_comment(),
                     "write_ready": write_ready,
-                    "hint": "使用get_current_user联网验证登录态；互动写入还需要服务器开启--allow-write且Cookie包含bili_jct"
+                    "hint": "使用get_current_user联网验证登录态；互动写入和评论写入都需要服务器显式开启且Cookie包含bili_jct"
                 }))
             }
             "get_current_user" => {
@@ -773,6 +819,36 @@ impl QueryService {
                 bili::watch_later::remove_watch_later(&p.bvid, &self.write_credential()?).await?;
                 Ok(json!({"ok":true,"bvid":p.bvid}))
             }
+            "post_comment" => {
+                self.ensure_comment()?;
+                let p: PostComment = parse(args)?;
+                let aid = input::validate_bvid(&p.bvid)? as i64;
+                input::text(&p.message, 1000, "message")?;
+                let mentions: Vec<(String, i64)> = p
+                    .mentions
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|m| (m.name.trim().to_string(), m.mid))
+                    .collect();
+                let posted = bili::interaction::post_comment(
+                    &self.write_credential()?,
+                    aid,
+                    &p.message,
+                    p.root,
+                    p.parent,
+                    &mentions,
+                )
+                .await?;
+                Ok(json!({
+                    "ok": true,
+                    "bvid": p.bvid,
+                    "aid": aid,
+                    "rpid": posted.rpid,
+                    "root": posted.root,
+                    "parent": posted.parent,
+                    "mentions": mentions.len(),
+                }))
+            }
             _ => Err(QueryError::new("UNKNOWN_TOOL", "工具不存在")),
         }
     }
@@ -836,6 +912,7 @@ mod tests {
                 max_concurrency: 1,
                 timeout_secs: 1,
                 allow_write: false,
+                allow_comment: false,
             },
             Duration::from_millis(50),
         );
@@ -855,7 +932,7 @@ mod tests {
     }
     #[test]
     fn write_tools_are_hidden_unless_explicitly_enabled() {
-        let read = tools(false);
+        let read = tools(false, false);
         assert_eq!(read.len(), 35);
         for name in [
             "like_video",
@@ -863,10 +940,11 @@ mod tests {
             "favorite_video",
             "add_watch_later",
             "remove_watch_later",
+            "post_comment",
         ] {
             assert!(read.iter().all(|tool| tool.name != name));
         }
-        let write = tools(true);
+        let write = tools(true, false);
         assert_eq!(write.len(), 40);
         for name in [
             "like_video",
@@ -877,6 +955,14 @@ mod tests {
         ] {
             assert!(write.iter().any(|tool| tool.name == name));
         }
+        assert!(write.iter().all(|tool| tool.name != "post_comment"));
+
+        let comment = tools(false, true);
+        assert_eq!(comment.len(), 36);
+        assert!(comment.iter().any(|tool| tool.name == "post_comment"));
+        assert!(comment.iter().all(|tool| tool.name != "like_video"));
+
+        assert_eq!(tools(true, true).len(), 41);
     }
 
     #[tokio::test]
@@ -888,6 +974,7 @@ mod tests {
                 max_concurrency: 4,
                 timeout_secs: 1,
                 allow_write: true,
+                allow_comment: false,
             },
         );
         assert!(service.allow_write());
@@ -918,6 +1005,7 @@ mod tests {
                 max_concurrency: 4,
                 timeout_secs: 45,
                 allow_write: false,
+                allow_comment: false,
             },
         );
         assert!(!service.restart_required());
@@ -928,9 +1016,55 @@ mod tests {
         assert!(service.allow_write());
         assert_eq!(service.tools().len(), 40);
         let mut settings = service.settings();
+        settings.allow_comment = true;
+        service.update_settings(settings).unwrap();
+        assert!(service.allow_comment());
+        assert_eq!(service.tools().len(), 41);
+        let mut settings = service.settings();
         settings.max_concurrency = 8;
         service.update_settings(settings).unwrap();
         assert!(service.restart_required());
+    }
+
+    #[tokio::test]
+    async fn comment_tool_is_separately_gated_and_validates_before_network() {
+        let service = QueryService::new(None, RuntimeSettings::default());
+        assert_eq!(
+            service
+                .call(
+                    "post_comment",
+                    json!({"bvid":"BV17x411w7KC","message":"hi"})
+                )
+                .await
+                .unwrap_err()
+                .code,
+            "UNKNOWN_TOOL"
+        );
+
+        let mut settings = service.settings();
+        settings.allow_comment = true;
+        service.update_settings(settings).unwrap();
+        for args in [
+            json!({"bvid":"invalid","message":"hi"}),
+            json!({"bvid":"BV17x411w7KC","message":"   "}),
+            json!({"bvid":"BV17x411w7KC","message":"字".repeat(1001)}),
+        ] {
+            assert_eq!(
+                service.call("post_comment", args).await.unwrap_err().code,
+                "INVALID_PARAMS"
+            );
+        }
+        assert_eq!(
+            service
+                .call(
+                    "post_comment",
+                    json!({"bvid":"BV17x411w7KC","message":"hi"})
+                )
+                .await
+                .unwrap_err()
+                .code,
+            "AUTH_REQUIRED"
+        );
     }
 
     #[tokio::test]
@@ -942,6 +1076,7 @@ mod tests {
                 max_concurrency: 4,
                 timeout_secs: 1,
                 allow_write: false,
+                allow_comment: false,
             },
         );
         for (name, args) in [

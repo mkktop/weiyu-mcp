@@ -60,6 +60,9 @@ def main():
     writable = json.loads(subprocess.check_output(prefix + ["tools", "--allow-write"], env=env, timeout=20))
     assert len(writable["tools"]) == 40
     assert any(tool["name"] == "like_video" for tool in writable["tools"])
+    commented = json.loads(subprocess.check_output(prefix + ["tools", "--allow-comment"], env=env, timeout=20))
+    assert len(commented["tools"]) == 36
+    assert any(tool["name"] == "post_comment" for tool in commented["tools"])
 
     parsed = json.loads(
         subprocess.check_output(
@@ -167,7 +170,7 @@ def main():
             ).read()
         )
         assert admin_status["read_tools"] == 35
-        assert admin_status["write_tools"] == 40
+        assert admin_status["write_tools"] == 41
         assert admin_status["persistence"] is True
         assert admin_status["using_default_password"] is True
         legacy_status = json.loads(
@@ -219,7 +222,7 @@ def main():
                     "version": version,
                     "runner": args.runner,
                     "tools": 35,
-                    "write_tools": 40,
+                    "write_tools": 41,
                     "stdio": "passed",
                     "http": "passed",
                     "admin": "passed",

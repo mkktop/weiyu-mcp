@@ -130,6 +130,7 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
         <div class="row"><span class="label">工具</span><span class="value" id="tools">-</span></div>
         <div class="row"><span class="label">B站登录</span><span class="value" id="credential">-</span></div>
         <div class="row"><span class="label">写入能力</span><span class="value" id="write">-</span></div>
+        <div class="row"><span class="label">评论写入</span><span class="value" id="comment">-</span></div>
         <div class="row"><span class="label">数据目录</span><span class="value" id="data-dir">-</span></div>
         <div class="row"><span class="label">管理密码</span><span class="value" id="admin-password">-</span></div>
       </section>
@@ -169,6 +170,13 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
         <input id="allow-write" type="checkbox">
         <span>启用互动写入工具（点赞 / 投币 / 收藏 / 稍后再看）</span>
       </label>
+      <label class="check">
+        <input id="allow-comment" type="checkbox">
+        <span>启用评论工具（公开评论 / 回复 / @用户）</span>
+      </label>
+      <div class="muted">
+        评论会以真实账号公开发言，回复和 @ 会给对方发送通知；此开关独立于互动写入，建议只在需要时开启。
+      </div>
       <div class="muted" id="restart-note"></div>
       <div class="actions">
         <button class="primary" id="save-settings">保存设置</button>
@@ -376,6 +384,11 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
           ? '已开启，Cookie 可写'
           : '已开启，但 Cookie 缺少 bili_jct'
         : '未开启';
+      $('comment').textContent = data.comment_enabled
+        ? data.write_ready
+          ? '已开启，Cookie 可写'
+          : '已开启，但 Cookie 缺少 bili_jct'
+        : '未开启';
       $('data-dir').textContent = data.data_dir || '未配置（无法持久化）';
       $('admin-password').textContent = data.using_default_password
         ? '默认 admin（建议修改）'
@@ -387,6 +400,7 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
       $('max-concurrency').value = data.settings.max_concurrency;
       $('timeout-secs').value = data.settings.timeout_secs;
       $('allow-write').checked = !!data.settings.allow_write;
+      $('allow-comment').checked = !!data.settings.allow_comment;
       $('restart-note').textContent = data.restart_required
         ? '并发数已修改，需要重启容器后生效。'
         : '';
@@ -533,6 +547,7 @@ code { background: #0e1318; padding: 1px 5px; border-radius: 5px; }
       max_concurrency: Number($('max-concurrency').value),
       timeout_secs: Number($('timeout-secs').value),
       allow_write: $('allow-write').checked,
+      allow_comment: $('allow-comment').checked,
     };
     try {
       const data = await api('/admin/api/settings', {

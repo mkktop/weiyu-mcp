@@ -41,6 +41,17 @@ struct Cli {
         default_value = "false"
     )]
     allow_write: String,
+    /// 初始评论写入开关（独立于互动写入）；settings.json 存在时以文件为准
+    #[arg(
+        long,
+        global = true,
+        env = "WEIYU_ALLOW_COMMENT",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true",
+        default_value = "false"
+    )]
+    allow_comment: String,
     /// 初始每秒工具查询数，0表示不限制
     #[arg(long,global=true,env="WEIYU_RATE_LIMIT",default_value_t=2,value_parser=clap::value_parser!(u32).range(0..=100))]
     rate_limit: u32,
@@ -118,12 +129,14 @@ async fn main() -> std::process::ExitCode {
 
 async fn run(cli: Cli) -> Result<(), QueryError> {
     let allow_write = parse_switch(&cli.allow_write, "WEIYU_ALLOW_WRITE")?;
+    let allow_comment = parse_switch(&cli.allow_comment, "WEIYU_ALLOW_COMMENT")?;
     let settings_store = SettingsStore::new(cli.data_dir.clone());
     let defaults = RuntimeSettings {
         rate_limit: cli.rate_limit,
         max_concurrency: cli.max_concurrency,
         timeout_secs: cli.timeout_secs,
         allow_write,
+        allow_comment,
     };
     defaults.validate()?;
     let settings = settings_store.load(defaults.clone())?;
@@ -132,7 +145,9 @@ async fn run(cli: Cli) -> Result<(), QueryError> {
     if matches!(cli.command, Command::Tools) {
         println!(
             "{}",
-            serde_json::to_string_pretty(&json!({"tools":query::tools(settings.allow_write)}))?
+            serde_json::to_string_pretty(
+                &json!({"tools":query::tools(settings.allow_write, settings.allow_comment)})
+            )?
         );
         return Ok(());
     }
@@ -176,6 +191,9 @@ async fn run(cli: Cli) -> Result<(), QueryError> {
             if service.allow_write() {
                 eprintln!("警告：互动写入工具已启用，连接的AI可以点赞/投币/收藏/修改稍后再看。");
             }
+            if service.allow_comment() {
+                eprintln!("警告：评论工具已启用，连接的AI可以以账号身份公开评论、回复和@用户。");
+            }
             let running = QueryServer(service)
                 .serve(rmcp::transport::stdio())
                 .await
@@ -208,6 +226,11 @@ async fn run(cli: Cli) -> Result<(), QueryError> {
             if service.allow_write() {
                 eprintln!(
                     "警告：互动写入工具已启用，持有访问令牌的AI可以点赞/投币/收藏/修改稍后再看。"
+                );
+            }
+            if service.allow_comment() {
+                eprintln!(
+                    "警告：评论工具已启用，持有访问令牌的AI可以以账号身份公开评论、回复和@用户。"
                 );
             }
             let cancel = CancellationToken::new();

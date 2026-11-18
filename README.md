@@ -4,6 +4,7 @@
 
 - 35 个**只读**查询工具：搜索、解析、评论、字幕、弹幕、专栏、UP 主、榜单、个人列表。
 - 5 个**可选互动写入**工具：点赞、投币、收藏、加入/移出稍后再看。默认不注册，必须显式开启。
+- 1 个**可选评论工具**：发表评论、回复评论、@ 用户。独立开关，默认关闭。
 - 三种入口共用同一份工具定义：JSON CLI、stdio MCP、Streamable HTTP MCP。
 - 单个静态 musl 二进制，无 Tauri / WebView / FFmpeg / Node / Python / SQLite 依赖。
 - 部署方式：systemd 或 Docker（distroless、非 root、只读根文件系统）。
@@ -120,10 +121,10 @@ weiyu-mcp serve \
 
 - 浏览器打开 `http://127.0.0.1:8787/admin`，首次进入设置管理密码（默认 `admin`），之后用密码登录。
 - 登录会话 12 小时；服务重启后需要重新登录。
-- 功能：B 站扫码登录、验证登录态、退出登录、限速/并发/超时/写入开关、修改管理密码。
+- 功能：B 站扫码登录、验证登录态、退出登录、限速/并发/超时/互动写入/评论写入开关、修改管理密码。
 - 扫码成功后 Cookie 写入 `$WEIYU_DATA_DIR/bilibili.cookie`，并立即热更新内存凭据，不需要重启。
 - `$WEIYU_DATA_DIR/settings.json` 保存运行设置；文件存在后以文件为准，CLI/环境变量只作为首次启动的初始值。
-- 限速、超时、写入开关即时生效；**并发数修改需要重启容器**（信号量在启动时创建）。
+- 限速、超时、写入开关、评论开关即时生效；**并发数修改需要重启容器**（信号量在启动时创建）。
 - 忘记管理密码：删除 `$WEIYU_DATA_DIR/admin.json` 后重启，重新进入设置页。
 - `WEIYU_ADMIN_TOKEN` / `--admin-token-file` 现在是**可选的 API Bearer**，供脚本/自动化直接调用管理 API；不配置也可以使用管理台密码登录。
 
@@ -163,6 +164,20 @@ weiyu-mcp serve \
 - 使用专用账号，不要用主账号。
 - 只在必要时开启；多个 AI 客户端共用一个令牌时尤其谨慎。
 - 投币等消耗性操作应在 AI 客户端侧要求人工确认。
+
+## 评论写入（独立开关，默认关闭）
+
+评论工具会以真实账号公开发言，回复和 @ 会给对方发送通知。它**不受**“互动写入”开关影响，需要在管理台单独勾选“启用评论工具”，或首次启动时 `--allow-comment` / `WEIYU_ALLOW_COMMENT=true`。
+
+开启后增加 1 个工具：
+
+| 工具 | 作用 | 注意事项 |
+| --- | --- | --- |
+| `post_comment` | 发表评论 / 回复评论 / @ 用户 | 公开可见；`parent` 为回复目标 rpid；`mentions` 必须与正文 `@昵称` 对应 |
+
+`mentions` 格式：`[{"mid": 123, "name": "昵称"}]`。B 站只有收到 `at_name_to_mid` 才会把正文里的 `@昵称` 变成真实提及并通知对方；只写正文不会通知。发表评论同样要求 Cookie 含 `bili_jct`。
+
+建议只在明确需要时开启，并要求 AI 客户端在调用前展示评论内容。
 
 ## 工具清单
 
@@ -213,7 +228,7 @@ touch secrets/bilibili.cookie
 chmod 0644 secrets/mcp-token secrets/admin-token secrets/bilibili.cookie
 # 容器以 UID 65532 运行，需要可写 data 目录
 sudo chown -R 65532:65532 data
-cp .env.example .env   # 修改 WEIYU_PUBLIC_HOST / WEIYU_IMAGE / WEIYU_ALLOW_WRITE
+cp .env.example .env   # 修改 WEIYU_PUBLIC_HOST / WEIYU_IMAGE / WEIYU_ALLOW_WRITE / WEIYU_ALLOW_COMMENT
 docker compose up -d --build
 docker compose logs -f
 ```
@@ -250,7 +265,8 @@ docker compose up -d --no-build
 | `WEIYU_DATA_DIR` | 无 | 可写数据目录；存放 `settings.json`、`admin.json` 和扫码登录后的 `bilibili.cookie` |
 | `WEIYU_COOKIE_FILE` | 无 | 只读 Cookie 回退文件；数据目录 Cookie 优先 |
 | `WEIYU_ADMIN_TOKEN` / `WEIYU_ADMIN_TOKEN_FILE` | 无 | 可选的 admin API Bearer；管理台密码在首次访问时设置，不依赖此项 |
-| `WEIYU_ALLOW_WRITE` | `false` | 首次启动的写入开关；`settings.json` 存在后以文件为准 |
+| `WEIYU_ALLOW_WRITE` | `false` | 首次启动的互动写入开关；`settings.json` 存在后以文件为准 |
+| `WEIYU_ALLOW_COMMENT` | `false` | 首次启动的评论写入开关，独立于 `WEIYU_ALLOW_WRITE`；`settings.json` 存在后以文件为准 |
 | `WEIYU_MCP_TOKEN` / `WEIYU_MCP_TOKEN_FILE` | 无 | HTTP MCP Bearer 令牌，至少 32 字符 |
 | `WEIYU_LISTEN` | `127.0.0.1:8787` | HTTP 监听地址 |
 | `WEIYU_ALLOWED_HOSTS` | 本机 | 逗号分隔的允许 Host |

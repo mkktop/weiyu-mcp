@@ -1,6 +1,6 @@
 services:
   weiyu-mcp:
-    image: ${WEIYU_IMAGE:-weiyu-mcp:0.2.4}
+    image: ${WEIYU_IMAGE:-weiyu-mcp:0.3.0}
     # Some hosts disable Docker's iptables management, which breaks DNS/NAT on
     # user-defined bridges. The default bridge keeps port mapping and works there.
     network_mode: bridge
@@ -27,6 +27,8 @@ services:
       WEIYU_TIMEOUT_SECS: ${WEIYU_TIMEOUT_SECS:-45}
       # 默认 false；开启后持有令牌的 AI 可以点赞/投币/收藏/修改稍后再看
       WEIYU_ALLOW_WRITE: ${WEIYU_ALLOW_WRITE:-false}
+      # 默认 false；独立开关，开启后 AI 可以公开发评论、回复和@用户
+      WEIYU_ALLOW_COMMENT: ${WEIYU_ALLOW_COMMENT:-false}
     volumes:
       # 可写数据目录：settings.json、扫码登录后的 bilibili.cookie
       - ./data:/data

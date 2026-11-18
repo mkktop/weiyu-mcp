@@ -21,6 +21,9 @@ fn app() -> Router {
     app_with_write(false)
 }
 fn app_with_write(allow_write: bool) -> Router {
+    app_with_options(allow_write, false)
+}
+fn app_with_options(allow_write: bool, allow_comment: bool) -> Router {
     http::router(
         QueryService::new(
             None,
@@ -29,6 +32,7 @@ fn app_with_write(allow_write: bool) -> Router {
                 max_concurrency: 4,
                 timeout_secs: 3,
                 allow_write,
+                allow_comment,
             },
         ),
         TOKEN.into(),
@@ -150,6 +154,45 @@ async fn write_tools_appear_only_after_opt_in() {
 }
 
 #[tokio::test]
+async fn comment_tool_requires_separate_opt_in() {
+    let list = rpc(
+        app_with_options(true, false),
+        json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
+    )
+    .await;
+    assert!(!list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool["name"] == "post_comment"));
+
+    let server = app_with_options(true, true);
+    let list = rpc(
+        server.clone(),
+        json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
+    )
+    .await;
+    let tools = list["result"]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 41);
+    let comment = tools
+        .iter()
+        .find(|tool| tool["name"] == "post_comment")
+        .expect("post_comment should be listed");
+    assert_eq!(comment["annotations"]["readOnlyHint"], false);
+
+    let result = rpc(
+        server,
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"post_comment","arguments":{"bvid":"BV17x411w7KC","message":"测试"}}}),
+    )
+    .await;
+    assert_eq!(result["result"]["isError"], true);
+    assert_eq!(
+        result["result"]["structuredContent"]["error"]["code"],
+        "AUTH_REQUIRED"
+    );
+}
+
+#[tokio::test]
 async fn auth_is_required_but_health_check_is_public() {
     let mut req = request(json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}));
     req.headers_mut().remove("authorization");
@@ -201,6 +244,7 @@ async fn host_and_origin_rules_apply_to_authenticated_requests() {
                 max_concurrency: 4,
                 timeout_secs: 3,
                 allow_write: false,
+                allow_comment: false,
             },
         ),
         TOKEN.into(),
@@ -275,7 +319,7 @@ async fn admin_requires_separate_token_and_serves_ui() {
     let body: Value =
         serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(body["read_tools"], 35);
-    assert_eq!(body["write_tools"], 40);
+    assert_eq!(body["write_tools"], 41);
     assert_eq!(body["credential_configured"], false);
     assert_eq!(body["persistence"], true);
 
@@ -306,7 +350,8 @@ async fn admin_settings_apply_to_live_service() {
         "rate_limit": 5,
         "max_concurrency": 8,
         "timeout_secs": 30,
-        "allow_write": true
+        "allow_write": true,
+        "allow_comment": false
     });
     let response = app
         .clone()
@@ -336,7 +381,8 @@ async fn admin_settings_apply_to_live_service() {
         "rate_limit": 101,
         "max_concurrency": 4,
         "timeout_secs": 45,
-        "allow_write": false
+        "allow_write": false,
+        "allow_comment": false
     });
     let response = app
         .oneshot(admin_request(

@@ -13,6 +13,9 @@ pub struct RuntimeSettings {
     pub max_concurrency: u32,
     pub timeout_secs: u64,
     pub allow_write: bool,
+    /// 评论发表单独开关；默认关闭，不受 allow_write 影响
+    #[serde(default)]
+    pub allow_comment: bool,
 }
 
 impl Default for RuntimeSettings {
@@ -22,6 +25,7 @@ impl Default for RuntimeSettings {
             max_concurrency: 4,
             timeout_secs: 45,
             allow_write: false,
+            allow_comment: false,
         }
     }
 }
@@ -149,6 +153,14 @@ mod tests {
         settings.max_concurrency = 4;
         settings.timeout_secs = 0;
         assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn loads_legacy_settings_without_allow_comment() {
+        let raw = br#"{"rate_limit":2,"max_concurrency":4,"timeout_secs":45,"allow_write":true}"#;
+        let settings: RuntimeSettings = serde_json::from_slice(raw).unwrap();
+        assert!(settings.allow_write);
+        assert!(!settings.allow_comment);
     }
 
     #[test]

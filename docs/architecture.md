@@ -58,6 +58,8 @@ weiyu-core
 
 - 只读工具：35 个，始终注册。
 - 互动写入工具：5 个，只有运行设置 `allow_write=true` 时才加入目录。
+- 评论工具：1 个（`post_comment`，支持回复和 @ 用户），由独立设置 `allow_comment=true` 控制，
+  默认关闭；即使开启互动写入也不会自动暴露评论。
 - 运行设置来自 `$WEIYU_DATA_DIR/settings.json`；管理台修改后即时生效（并发数需重启）。
 - 未开启时，写入工具不会出现在 `tools/list`，直接调用返回 `UNKNOWN_TOOL`。
 - 开启后仍要求 Cookie 含 `bili_jct`；缺少 CSRF 字段返回 `AUTH_REQUIRED`。
@@ -82,6 +84,7 @@ weiyu-core
 | 数据目录 | 容器以 nonroot 运行，`/data` 是唯一可写挂载；systemd 用 `ReadWritePaths` |
 | URL | 链接和字幕 URL 做域名/协议/端口白名单，防 SSRF |
 | 写入 | 默认不注册；需在管理台开启且 Cookie 含 `bili_jct` |
+| 评论 | 独立开关 `allow_comment`，默认关闭；公开可见并会通知被回复/@的用户 |
 
 ## B 站风控
 
@@ -106,7 +109,7 @@ weiyu-core
 - 扫码登录：`POST /admin/api/login/qrcode` 调 B 站生成二维码并返回 SVG；`GET /admin/api/login/poll?key=...` 轮询状态。
 - 登录成功后把 Cookie 写入 `$WEIYU_DATA_DIR/bilibili.cookie`（原子写、0600），同时替换 `QueryService` 内存凭据，MCP 下一次调用立即使用新 Cookie。
 - 退出登录写入空 Cookie 文件作为标记，避免只读回退 Cookie 在重启后重新生效。
-- 设置保存到 `settings.json`；限速、超时、写入开关热更新，并发数变更提示重启。
+- 设置保存到 `settings.json`；限速、超时、互动写入、评论写入热更新，并发数变更提示重启。
 
 ## 当前未实现（后续可加）
 

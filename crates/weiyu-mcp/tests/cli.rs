@@ -11,7 +11,8 @@ fn cli() -> Command {
         .env_remove("WEIYU_COOKIE_FILE")
         .env_remove("WEIYU_MCP_TOKEN")
         .env_remove("WEIYU_MCP_TOKEN_FILE")
-        .env_remove("WEIYU_ALLOW_WRITE");
+        .env_remove("WEIYU_ALLOW_WRITE")
+        .env_remove("WEIYU_ALLOW_COMMENT");
     command
 }
 #[test]
@@ -74,6 +75,42 @@ fn write_tools_are_rejected_without_opt_in() {
             "--args",
             r#"{"bvid":"BV17x411w7KC"}"#,
         ])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let parsed: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(parsed["error"]["code"], "AUTH_REQUIRED");
+}
+
+#[test]
+fn comment_tool_requires_its_own_opt_in() {
+    let result = cli().args(["tools", "--allow-comment"]).output().unwrap();
+    assert!(result.status.success());
+    let catalog: Value = serde_json::from_slice(&result.stdout).unwrap();
+    let tools = catalog["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 36);
+    assert!(tools.iter().any(|tool| tool["name"] == "post_comment"));
+    assert!(tools.iter().all(|tool| tool["name"] != "like_video"));
+
+    let args = r#"{"bvid":"BV17x411w7KC","message":"测试"}"#;
+    let result = cli()
+        .args(["call", "post_comment", "--args", args])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let parsed: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(parsed["error"]["code"], "UNKNOWN_TOOL");
+
+    let result = cli()
+        .args(["--allow-write", "call", "post_comment", "--args", args])
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let parsed: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(parsed["error"]["code"], "UNKNOWN_TOOL");
+
+    let result = cli()
+        .args(["--allow-comment", "call", "post_comment", "--args", args])
         .output()
         .unwrap();
     assert!(!result.status.success());
