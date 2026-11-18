@@ -4,7 +4,7 @@
 
 - Repository: https://github.com/mkktop/bilbili_copy
 - Source path: `crates/weiyu-core`
-- Copied from commit: `2535359370db464fb82e18fc345150264bee0837`
+- Copied from commit: `4ac669e` (`4ac669e958e75c47f8f91051a66f125153eb7cb3`)
 
 The copy is intentional: this project must build and deploy independently of the
 desktop application. Keep the copy in sync with:
@@ -13,6 +13,5 @@ desktop application. Keep the copy in sync with:
 scripts/sync-core.sh /path/to/bilbili_copy
 ```
 
-The sync script records the new upstream commit in this file. Review the diff
-before committing a sync; desktop-specific behavior (Windows DPAPI credentials)
-must not leak into the server runtime.
+Review the diff before committing a sync; desktop-specific behavior (Windows DPAPI
+credentials) must not leak into the server runtime.
