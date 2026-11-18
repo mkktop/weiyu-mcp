@@ -183,6 +183,14 @@ docker compose logs -f
 
 服务绑定宿主机 `127.0.0.1:8787`，容器使用 distroless + nonroot + 只读根文件系统。Cookie 留空即匿名运行。
 
+构建注意事项：
+
+- 运行镜像默认是 `gcr.io/distroless/cc-debian12:nonroot`。无法直连 GCR 时，用 `RUNTIME_IMAGE` 指定镜像加速器地址，例如 `gcr.m.daocloud.io/distroless/cc-debian12:nonroot`。
+- distroless 不含 CA 证书，Dockerfile 会从 builder 复制 `/etc/ssl/certs`；缺少时 B 站 HTTPS 请求会失败。
+- 宿主关闭了 Docker iptables（`daemon.json` 里 `"iptables": false`）时，自定义 bridge 的 DNS/NAT 不可用；compose 已设置 `network_mode: bridge`。
+- 没有安装 buildx 的宿主可用经典 builder：`DOCKER_BUILDKIT=0 docker build ...`。首次在 4 核 ARM 上编译约 30–40 分钟；小内存机器保持 `CARGO_BUILD_JOBS=2`，内存充足可调到 4。
+- 实际部署记录见 [docs/deployment-gm800.md](docs/deployment-gm800.md)。
+
 ## 配置项
 
 | 环境变量 | 默认值 | 说明 |

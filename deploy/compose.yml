@@ -1,8 +1,17 @@
 services:
   weiyu-mcp:
+    image: weiyu-mcp:${WEIYU_IMAGE_TAG:-0.1.0}
+    # Some hosts disable Docker's iptables management, which breaks DNS/NAT on
+    # user-defined bridges. The default bridge keeps port mapping and works there.
+    network_mode: bridge
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      args:
+        RUNTIME_IMAGE: ${RUNTIME_IMAGE:-gcr.io/distroless/cc-debian12:nonroot}
+        CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-2}
+        CARGO_PROFILE_RELEASE_LTO: ${CARGO_PROFILE_RELEASE_LTO:-thin}
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${CARGO_PROFILE_RELEASE_CODEGEN_UNITS:-1}
     restart: unless-stopped
     ports:
       - "127.0.0.1:8787:8787"
