@@ -5,7 +5,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 ARG TARGETARCH
 
 COPY deploy/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY bin/${TARGETARCH}/weiyu-mcp /usr/local/bin/weiyu-mcp
+COPY --chmod=0755 bin/${TARGETARCH}/weiyu-mcp /usr/local/bin/weiyu-mcp
 
 EXPOSE 8787
 USER nonroot:nonroot
