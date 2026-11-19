@@ -12,11 +12,11 @@
 
 ## 当前状态
 
-- 镜像：`ghcr.io/mkktop/weiyu-mcp:0.3.1`（公开，可匿名拉取）
+- 镜像：`ghcr.io/mkktop/weiyu-mcp:0.3.2`（公开，可匿名拉取）
 - 容器：`weiyu-mcp-weiyu-mcp-1`
 - 端口：`0.0.0.0:8787`（局域网可访问，`WEIYU_BIND_ADDR=0.0.0.0`）
 - 管理台：`/admin`，首次访问设置管理密码（默认 `admin`），扫码登录已可用
-- 版本：`0.3.1`
+- 版本：`0.3.2`
 - 重启策略：`unless-stopped`
 - 运行用户：`nonroot:nonroot`，只读根文件系统，`cap_drop: ALL`
 
@@ -47,7 +47,7 @@
 - `deploy/Dockerfile.ci` 把预编译二进制复制进 `distroless/static-debian12`，不在 Docker 内编译。
 - `docker/build-push-action` 推送多架构镜像到 GHCR。
 - 仓库：<https://github.com/mkktop/weiyu-mcp>
-- Release：<https://github.com/mkktop/weiyu-mcp/releases/tag/v0.3.1>
+- Release：<https://github.com/mkktop/weiyu-mcp/releases/tag/v0.3.2>
 
 `v0.2.0` 的镜像二进制缺少可执行位（artifact 上传丢失 mode），运行时报
 `/usr/local/bin/weiyu-mcp: permission denied`。`v0.2.2` 在 `Dockerfile.ci` 中使用
@@ -65,6 +65,9 @@
 
 `v0.3.1` 处理评论索引延迟：刚发表的一级评论立即回复可能返回「没有该评论」，现在会等待 3 秒
 自动重试一次；实测确认 @ 提及会写入 `content.members`，但 @ 自己不会生成提及。
+
+`v0.3.2` 重设计管理台界面：新品牌色与渐变标题、卡片阴影与入场动画、状态值按健康度着色、
+互动写入/评论开关改为滑动开关、二维码加渐变边框并带等待动画，提示条 8 秒自动消失。
 
 ### 初始 0.1.1 本地构建（历史）
 
@@ -85,9 +88,9 @@ distroless 不含 CA 证书，第一次运行时手工追加 CA 层生成了 `0.
 ## 更新镜像
 
 ```bash
-docker pull ghcr.io/mkktop/weiyu-mcp:0.3.1
+docker pull ghcr.io/mkktop/weiyu-mcp:0.3.2
 cd /opt/weiyu-mcp/src/deploy
-sed -i 's#^WEIYU_IMAGE=.*#WEIYU_IMAGE=ghcr.io/mkktop/weiyu-mcp:0.3.1#' .env
+sed -i 's#^WEIYU_IMAGE=.*#WEIYU_IMAGE=ghcr.io/mkktop/weiyu-mcp:0.3.2#' .env
 docker compose up -d --no-build
 docker compose logs --tail=50
 ```
@@ -98,7 +101,7 @@ docker compose logs --tail=50
 
 ```dotenv
 COMPOSE_PROJECT_NAME=weiyu-mcp
-WEIYU_IMAGE=ghcr.io/mkktop/weiyu-mcp:0.3.1
+WEIYU_IMAGE=ghcr.io/mkktop/weiyu-mcp:0.3.2
 WEIYU_PUBLIC_HOST=192.168.10.97,localhost,127.0.0.1
 WEIYU_BIND_ADDR=0.0.0.0
 WEIYU_RATE_LIMIT=2
@@ -119,7 +122,7 @@ compose 额外设置：
 ## 验证结果
 
 ```text
-health {'service': 'weiyu-mcp', 'status': 'ok', 'version': '0.3.1'}
+health {'service': 'weiyu-mcp', 'status': 'ok', 'version': '0.3.2'}
 /admin 200，管理台密码已设置（needs_setup=false，非默认密码）
 /admin/api/status 无令牌 -> 401；MCP 令牌 -> 401；admin API 令牌 -> 200
 status: 35 只读 / 41 全开，credential_configured=true（data），persistence=true
