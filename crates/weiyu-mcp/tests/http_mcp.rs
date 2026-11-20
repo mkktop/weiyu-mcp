@@ -107,7 +107,7 @@ async fn initialize_list_and_query_over_real_mcp_handler() {
     )
     .await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 35);
+    assert_eq!(tools.len(), 39);
     for tool in tools {
         assert_eq!(tool["annotations"]["readOnlyHint"], true);
         assert!(![
@@ -139,7 +139,7 @@ async fn write_tools_appear_only_after_opt_in() {
     )
     .await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 40);
+    assert_eq!(tools.len(), 44);
     let like = tools
         .iter()
         .find(|tool| tool["name"] == "like_video")
@@ -173,7 +173,7 @@ async fn comment_tool_requires_separate_opt_in() {
     )
     .await;
     let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 41);
+    assert_eq!(tools.len(), 45);
     let comment = tools
         .iter()
         .find(|tool| tool["name"] == "post_comment")
@@ -318,8 +318,8 @@ async fn admin_requires_separate_token_and_serves_ui() {
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value =
         serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert_eq!(body["read_tools"], 35);
-    assert_eq!(body["write_tools"], 41);
+    assert_eq!(body["read_tools"], 39);
+    assert_eq!(body["write_tools"], 45);
     assert_eq!(body["credential_configured"], false);
     assert_eq!(body["persistence"], true);
 
@@ -375,7 +375,7 @@ async fn admin_settings_apply_to_live_service() {
         json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
     )
     .await;
-    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 40);
+    assert_eq!(list["result"]["tools"].as_array().unwrap().len(), 44);
 
     let invalid = json!({
         "rate_limit": 101,

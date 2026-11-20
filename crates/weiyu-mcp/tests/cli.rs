@@ -21,14 +21,14 @@ fn json_cli_supports_query_discovery_and_exit_codes() {
     assert!(result.status.success());
     let catalog: Value = serde_json::from_slice(&result.stdout).unwrap();
     let tools = catalog["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 35);
+    assert_eq!(tools.len(), 39);
     assert!(tools.iter().all(|tool| tool["name"] != "like_video"));
 
     let result = cli().args(["tools", "--allow-write"]).output().unwrap();
     assert!(result.status.success());
     let catalog: Value = serde_json::from_slice(&result.stdout).unwrap();
     let tools = catalog["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 40);
+    assert_eq!(tools.len(), 44);
     assert!(tools.iter().any(|tool| tool["name"] == "like_video"));
     assert!(tools.iter().any(|tool| tool["name"] == "coin_video"));
 
@@ -39,7 +39,7 @@ fn json_cli_supports_query_discovery_and_exit_codes() {
         .unwrap();
     assert!(result.status.success());
     let catalog: Value = serde_json::from_slice(&result.stdout).unwrap();
-    assert_eq!(catalog["tools"].as_array().unwrap().len(), 40);
+    assert_eq!(catalog["tools"].as_array().unwrap().len(), 44);
 
     let result = cli()
         .args(["call", "parse_url", "--args", r#"{"url":"BV17x411w7KC"}"#])
@@ -88,7 +88,7 @@ fn comment_tool_requires_its_own_opt_in() {
     assert!(result.status.success());
     let catalog: Value = serde_json::from_slice(&result.stdout).unwrap();
     let tools = catalog["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 36);
+    assert_eq!(tools.len(), 40);
     assert!(tools.iter().any(|tool| tool["name"] == "post_comment"));
     assert!(tools.iter().all(|tool| tool["name"] != "like_video"));
 
@@ -137,7 +137,7 @@ async fn stdio_mcp_initializes_and_queries_without_log_noise() {
         stdin.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"test\",\"version\":\"1\"}}}\n").await.unwrap();
         let init:Value=serde_json::from_str(&output.next_line().await.unwrap().unwrap()).unwrap();assert_eq!(init["id"],1);assert_eq!(init["result"]["serverInfo"]["name"],"weiyu-mcp");
         stdin.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}\n").await.unwrap();
-        let list:Value=serde_json::from_str(&output.next_line().await.unwrap().unwrap()).unwrap();assert_eq!(list["id"],2);assert_eq!(list["result"]["tools"].as_array().unwrap().len(),35);
+        let list:Value=serde_json::from_str(&output.next_line().await.unwrap().unwrap()).unwrap();assert_eq!(list["id"],2);assert_eq!(list["result"]["tools"].as_array().unwrap().len(),39);
         stdin.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"parse_url\",\"arguments\":{\"url\":\"BV17x411w7KC\"}}}\n").await.unwrap();
         let result:Value=serde_json::from_str(&output.next_line().await.unwrap().unwrap()).unwrap();assert_eq!(result["id"],3);assert_eq!(result["result"]["structuredContent"]["aid"],170001);
         stdin.shutdown().await.unwrap();drop(stdin);

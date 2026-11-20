@@ -2600,7 +2600,7 @@ dependencies = [
 
 [[package]]
 name = "weiyu-core"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2624,7 +2624,7 @@ dependencies = [
 
 [[package]]
 name = "weiyu-mcp"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "argon2",

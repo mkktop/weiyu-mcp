@@ -2,7 +2,7 @@
 
 独立的 B 站查询 MCP 服务，面向 Linux 服务器部署，供 Claude Desktop、ZCode、Cursor、Codex 等 AI 客户端使用。
 
-- 35 个**只读**查询工具：搜索、解析、评论、字幕、弹幕、专栏、UP 主、榜单、个人列表。
+- 39 个**只读**查询工具：搜索、解析、评论、字幕、弹幕、专栏、UP 主、榜单、个人列表、消息通知（@/回复/点赞/未读数）。
 - 5 个**可选互动写入**工具：点赞、投币、收藏、加入/移出稍后再看。默认不注册，必须显式开启。
 - 1 个**可选评论工具**：发表评论、回复评论、@ 用户。独立开关，默认关闭。
 - 三种入口共用同一份工具定义：JSON CLI、stdio MCP、Streamable HTTP MCP。
@@ -186,7 +186,7 @@ weiyu-mcp serve \
 
 ## 工具清单
 
-只读 35 个：
+只读 39 个：
 
 | 领域 | 工具 |
 | --- | --- |
@@ -196,6 +196,7 @@ weiyu-mcp serve \
 | 内容 | `get_video_comments`、`get_comment_replies`、`get_video_subtitles`、`get_subtitle_content`、`get_video_danmaku`、`get_article_content` |
 | UP/合集 | `get_upper_info`、`get_upper_videos`、`get_upper_collections`、`get_collection_videos`、`get_followings`、`get_followers` |
 | 个人列表 | `get_watch_history`、`get_favorite_folders`、`get_favorite_videos`、`get_watch_later`、`get_bangumi_follow`、`get_subscribed_collections`、`get_dynamic_feed` |
+| 消息通知 | `get_at_feed`（@我的）、`get_reply_feed`（回复我的）、`get_like_feed`（收到的赞）、`get_message_unread`（未读数） |
 
 工具参数和 JSON Schema 以 `weiyu-mcp tools` 输出为准。
 
@@ -316,7 +317,7 @@ git diff -- crates/weiyu-core UPSTREAM.md
 
 | 能力 | 桌面版 `Weiyu.exe --mcp` | 本服务 |
 | --- | --- | --- |
-| 查询 | 有 | 有（35 个只读） |
+| 查询 | 有 | 有（39 个只读） |
 | 点赞/投币/收藏/稍后再看 | 有 | 可选（默认关闭） |
 | 下载、批量下载、订阅追更 | 有 | 无 |
 | 本地数据库、播放进度、设置 | 有 | 无（运行设置存 `settings.json`） |

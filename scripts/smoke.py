@@ -55,13 +55,13 @@ def main():
 
     version = subprocess.check_output(prefix + ["--version"], env=env, timeout=20).decode().strip()
     catalog = json.loads(subprocess.check_output(prefix + ["tools"], env=env, timeout=20))
-    assert len(catalog["tools"]) == 35
+    assert len(catalog["tools"]) == 39
     assert all(tool["name"] not in ("like_video", "coin_video") for tool in catalog["tools"])
     writable = json.loads(subprocess.check_output(prefix + ["tools", "--allow-write"], env=env, timeout=20))
-    assert len(writable["tools"]) == 40
+    assert len(writable["tools"]) == 44
     assert any(tool["name"] == "like_video" for tool in writable["tools"])
     commented = json.loads(subprocess.check_output(prefix + ["tools", "--allow-comment"], env=env, timeout=20))
-    assert len(commented["tools"]) == 36
+    assert len(commented["tools"]) == 40
     assert any(tool["name"] == "post_comment" for tool in commented["tools"])
 
     parsed = json.loads(
@@ -104,7 +104,7 @@ def main():
         assert stdio_rpc(init)["result"]["serverInfo"]["name"] == "weiyu-mcp"
         stdio.stdin.write(b'{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
         listing = stdio_rpc(message(2, "tools/list"))
-        assert len(listing["result"]["tools"]) == 35
+        assert len(listing["result"]["tools"]) == 39
         result = stdio_rpc(
             message(3, "tools/call", {"name": "parse_url", "arguments": {"url": "BV17x411w7KC"}})
         )
@@ -169,8 +169,8 @@ def main():
                 timeout=10,
             ).read()
         )
-        assert admin_status["read_tools"] == 35
-        assert admin_status["write_tools"] == 41
+        assert admin_status["read_tools"] == 39
+        assert admin_status["write_tools"] == 45
         assert admin_status["persistence"] is True
         assert admin_status["using_default_password"] is True
         legacy_status = json.loads(
@@ -182,7 +182,7 @@ def main():
                 timeout=10,
             ).read()
         )
-        assert legacy_status["read_tools"] == 35
+        assert legacy_status["read_tools"] == 39
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
@@ -203,7 +203,7 @@ def main():
             return json.loads(opener.open(req, timeout=60).read())
 
         assert http_rpc(init)["result"]["serverInfo"]["name"] == "weiyu-mcp"
-        assert len(http_rpc(message(2, "tools/list"))["result"]["tools"]) == 35
+        assert len(http_rpc(message(2, "tools/list"))["result"]["tools"]) == 39
         value = http_rpc(message(3, "tools/call", {"name": "parse_url", "arguments": {"url": "BV17x411w7KC"}}))
         assert value["result"]["structuredContent"]["aid"] == 170001
         value = http_rpc(message(4, "tools/call", {"name": "search_videos", "arguments": {"keyword": "test"}}))
@@ -221,8 +221,8 @@ def main():
                     "binary": str(args.binary),
                     "version": version,
                     "runner": args.runner,
-                    "tools": 35,
-                    "write_tools": 41,
+                    "tools": 39,
+                    "write_tools": 45,
                     "stdio": "passed",
                     "http": "passed",
                     "admin": "passed",

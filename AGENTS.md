@@ -25,7 +25,8 @@ GHCR image are built in `.github/workflows/release.yml` (`deploy/Dockerfile.ci`)
 
 ## Tool model
 
-- 35 read-only tools are always registered.
+- 39 read-only tools are always registered (including the message-feed tools `get_at_feed`,
+  `get_reply_feed`, `get_like_feed`, `get_message_unread` for @/reply/like notifications).
 - 5 interaction tools (`like_video`, `coin_video`, `favorite_video`, `add_watch_later`,
   `remove_watch_later`) are only registered when the runtime setting `allow_write=true`.
 - `post_comment` is gated separately by `allow_comment` (default false), independent of

@@ -56,7 +56,7 @@ weiyu-core
 
 ## 工具注册与写入门控
 
-- 只读工具：35 个，始终注册。
+- 只读工具：39 个，始终注册（含消息通知 `get_at_feed`/`get_reply_feed`/`get_like_feed`/`get_message_unread`）。
 - 互动写入工具：5 个，只有运行设置 `allow_write=true` 时才加入目录。
 - 评论工具：1 个（`post_comment`，支持回复和 @ 用户），由独立设置 `allow_comment=true` 控制，
   默认关闭；即使开启互动写入也不会自动暴露评论。

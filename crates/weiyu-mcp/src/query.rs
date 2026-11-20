@@ -74,6 +74,9 @@ params!(History { /// get_watch_history返回的next游标，需整体原样传�
 params!(Favorite { media_id: String, page: Option<u32> });
 params!(Collection { mid: i64, sid: String, /// season或series
     collection_type: String, page: Option<u32> });
+params!(MsgFeed { /// 上次返回的cursor.id，首页不传
+    last_id: Option<i64>, /// 上次返回的cursor.time，首页不传
+    last_time: Option<i64> });
 
 // ==================== 互动写入参数（默认不暴露） ====================
 params!(Like { bvid: String, /// true=点赞（默认），false=取消点赞
@@ -173,6 +176,10 @@ pub fn tools(allow_write: bool, allow_comment: bool) -> Vec<Tool> {
         tool::<Recommend>("get_recommend", "查询推荐视频，fresh_idx可递增换一批。"),
         tool::<Dynamic>("get_dynamic_feed", "查询关注动态，需要Cookie；offset使用上次返回的游标。"),
         tool::<History>("get_watch_history", "查询账号观看历史，需要Cookie；cursor需整体原样传回。"),
+        tool::<MsgFeed>("get_at_feed", "查询「@我的」通知列表，需要Cookie：谁在评论/动态里@了本账号。翻页传上次返回的cursor.id和cursor.time。"),
+        tool::<MsgFeed>("get_reply_feed", "查询「回复我的」通知列表，需要Cookie：谁回复了本账号的评论或动态。翻页传上次返回的cursor.id和cursor.time。"),
+        tool::<MsgFeed>("get_like_feed", "查询「收到的赞」通知列表，需要Cookie：谁点赞了本账号的内容。latest为最近未读，items为历史；翻页传cursor。"),
+        tool::<Empty>("get_message_unread", "查询消息未读数，需要Cookie：at/reply/like等计数字段，可用于轮询本账号是否被@或被回复。"),
         tool::<Empty>("get_favorite_folders", "查询当前账号收藏夹，需要Cookie。"),
         tool::<Favorite>("get_favorite_videos", "分页查询收藏夹内容，media_id来自收藏夹列表。"),
         tool::<Empty>("get_watch_later", "查询稍后再看，需要Cookie。"),
@@ -717,6 +724,32 @@ impl QueryService {
                 };
                 output(bili::history::get_watch_history(cursor, &self.credential()?).await?)
             }
+            "get_at_feed" | "get_reply_feed" | "get_like_feed" => {
+                let p: MsgFeed = parse(args)?;
+                let last_id = p
+                    .last_id
+                    .map(|v| input::positive(v, "last_id"))
+                    .transpose()?;
+                let last_time = p
+                    .last_time
+                    .map(|v| input::positive(v, "last_time"))
+                    .transpose()?;
+                let credential = self.credential()?;
+                let out = match name {
+                    "get_at_feed" => {
+                        bili::msgfeed::get_at_feed(&credential, last_id, last_time).await?
+                    }
+                    "get_reply_feed" => {
+                        bili::msgfeed::get_reply_feed(&credential, last_id, last_time).await?
+                    }
+                    _ => bili::msgfeed::get_like_feed(&credential, last_id, last_time).await?,
+                };
+                output(out)
+            }
+            "get_message_unread" => {
+                let _: Empty = parse(args)?;
+                output(bili::msgfeed::get_unread(&self.credential()?).await?)
+            }
             "get_favorite_folders" => {
                 let _: Empty = parse(args)?;
                 output(bili::favorite::get_user_favorite_folders(&self.credential()?).await?)
@@ -933,7 +966,7 @@ mod tests {
     #[test]
     fn write_tools_are_hidden_unless_explicitly_enabled() {
         let read = tools(false, false);
-        assert_eq!(read.len(), 35);
+        assert_eq!(read.len(), 39);
         for name in [
             "like_video",
             "coin_video",
@@ -945,7 +978,7 @@ mod tests {
             assert!(read.iter().all(|tool| tool.name != name));
         }
         let write = tools(true, false);
-        assert_eq!(write.len(), 40);
+        assert_eq!(write.len(), 44);
         for name in [
             "like_video",
             "coin_video",
@@ -958,11 +991,11 @@ mod tests {
         assert!(write.iter().all(|tool| tool.name != "post_comment"));
 
         let comment = tools(false, true);
-        assert_eq!(comment.len(), 36);
+        assert_eq!(comment.len(), 40);
         assert!(comment.iter().any(|tool| tool.name == "post_comment"));
         assert!(comment.iter().all(|tool| tool.name != "like_video"));
 
-        assert_eq!(tools(true, true).len(), 41);
+        assert_eq!(tools(true, true).len(), 45);
     }
 
     #[tokio::test]
@@ -1014,12 +1047,12 @@ mod tests {
         settings.rate_limit = 5;
         service.update_settings(settings).unwrap();
         assert!(service.allow_write());
-        assert_eq!(service.tools().len(), 40);
+        assert_eq!(service.tools().len(), 44);
         let mut settings = service.settings();
         settings.allow_comment = true;
         service.update_settings(settings).unwrap();
         assert!(service.allow_comment());
-        assert_eq!(service.tools().len(), 41);
+        assert_eq!(service.tools().len(), 45);
         let mut settings = service.settings();
         settings.max_concurrency = 8;
         service.update_settings(settings).unwrap();

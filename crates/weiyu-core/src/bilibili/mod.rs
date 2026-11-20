@@ -23,6 +23,7 @@ pub mod region;
 pub mod comment;
 pub mod dynamic;
 pub mod interaction;
+pub mod msgfeed;
 pub mod throttle;
 pub mod weekly;
 pub mod videoshot;
