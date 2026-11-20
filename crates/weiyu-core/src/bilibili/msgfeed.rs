@@ -15,7 +15,8 @@ pub async fn get_at_feed(
     last_id: Option<i64>,
     last_time: Option<i64>,
 ) -> Result<Value> {
-    get_feed(credential, "at", "time", last_id, last_time).await
+    // 翻页查询参数是 time，但条目上的时间戳字段叫 at_time
+    get_feed(credential, "at", "time", "at_time", last_id, last_time).await
 }
 
 /// 获取「回复我的」通知列表（别人回复了我的评论/动态）。
@@ -26,7 +27,15 @@ pub async fn get_reply_feed(
     last_id: Option<i64>,
     last_time: Option<i64>,
 ) -> Result<Value> {
-    get_feed(credential, "reply", "reply_time", last_id, last_time).await
+    get_feed(
+        credential,
+        "reply",
+        "reply_time",
+        "reply_time",
+        last_id,
+        last_time,
+    )
+    .await
 }
 
 /// 获取「收到的赞」列表（别人点赞了我的评论/动态等）。
@@ -38,7 +47,15 @@ pub async fn get_like_feed(
     last_id: Option<i64>,
     last_time: Option<i64>,
 ) -> Result<Value> {
-    get_feed(credential, "like", "like_time", last_id, last_time).await
+    get_feed(
+        credential,
+        "like",
+        "like_time",
+        "like_time",
+        last_id,
+        last_time,
+    )
+    .await
 }
 
 /// 获取消息未读数（@/回复/点赞/投币/弹幕/收藏/系统通知等）。
@@ -62,11 +79,13 @@ pub async fn get_unread(credential: &Credential) -> Result<Value> {
 }
 
 /// 三种通知列表共用请求逻辑（路径 feed = at/reply/like）。
-/// 翻页时间参数名不同：at 传 time，reply 传 reply_time，like 传 like_time。
+/// 翻页时间参数名不同：at 传 time，reply 传 reply_time，like 传 like_time；
+/// 条目上的时间戳字段也不完全一致（at 条目是 at_time），故分开传。
 async fn get_feed(
     credential: &Credential,
     feed: &str,
     time_param: &str,
+    item_ts_field: &str,
     last_id: Option<i64>,
     last_time: Option<i64>,
 ) -> Result<Value> {
@@ -93,7 +112,7 @@ async fn get_feed(
 
     let resp: Value = serde_json::from_str(&resp_text).context("消息通知响应解析失败")?;
     ensure_ok(&resp)?;
-    Ok(trim_feed(&resp["data"], time_param))
+    Ok(trim_feed(&resp["data"], item_ts_field))
 }
 
 fn ensure_ok(resp: &Value) -> Result<()> {
@@ -109,27 +128,27 @@ fn ensure_ok(resp: &Value) -> Result<()> {
 }
 
 /// 通知列表 → 精简 JSON：{items, cursor}（like 为 {latest, items, cursor}）。
-fn trim_feed(data: &Value, time_param: &str) -> Value {
+fn trim_feed(data: &Value, ts_field: &str) -> Value {
     // like 接口是 {latest:{items,last_view_at}, total:{cursor,items}} 双列表
     if data["total"].is_object() {
         return json!({
-            "latest": trim_items(&data["latest"]["items"], time_param),
-            "items": trim_items(&data["total"]["items"], time_param),
+            "latest": trim_items(&data["latest"]["items"], ts_field),
+            "items": trim_items(&data["total"]["items"], ts_field),
             "cursor": trim_cursor(&data["total"]["cursor"]),
         });
     }
     json!({
-        "items": trim_items(&data["items"], time_param),
+        "items": trim_items(&data["items"], ts_field),
         "cursor": trim_cursor(&data["cursor"]),
     })
 }
 
-fn trim_items(list: &Value, time_param: &str) -> Value {
+fn trim_items(list: &Value, ts_field: &str) -> Value {
     let items = list.as_array().cloned().unwrap_or_default();
     Value::Array(
         items
             .iter()
-            .map(|item| trim_notice(item, time_param))
+            .map(|item| trim_notice(item, ts_field))
             .collect(),
     )
 }
@@ -144,13 +163,10 @@ fn trim_cursor(cursor: &Value) -> Value {
 
 /// 单条通知 → 精简 JSON：id、时间、发送者、正文摘要、跳转链接。
 /// at/reply/like 三种通知的 item 字段名有差异，按存在与否选择性拷贝。
-fn trim_notice(item: &Value, time_param: &str) -> Value {
+fn trim_notice(item: &Value, ts_field: &str) -> Value {
     let mut out = Map::new();
     out.insert("id".into(), json!(item["id"].as_i64().unwrap_or(0)));
-    out.insert(
-        time_param.into(),
-        json!(item[time_param].as_i64().unwrap_or(0)),
-    );
+    out.insert(ts_field.into(), json!(item[ts_field].as_i64().unwrap_or(0)));
     out.insert("user".into(), trim_user(&item["user"]));
 
     let detail = &item["item"];
