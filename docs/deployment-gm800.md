@@ -12,11 +12,11 @@
 
 ## 当前状态
 
-- 镜像：`ghcr.io/mkktop/weiyu-mcp:0.4.0`（公开，可匿名拉取）
+- 镜像：`ghcr.io/mkktop/weiyu-mcp:0.4.1`（公开，可匿名拉取）
 - 容器：`weiyu-mcp-weiyu-mcp-1`
 - 端口：`0.0.0.0:8787`（局域网可访问，`WEIYU_BIND_ADDR=0.0.0.0`）
 - 管理台：`/admin`，首次访问设置管理密码（默认 `admin`），扫码登录已可用
-- 版本：`0.4.0`
+- 版本：`0.4.1`
 - 重启策略：`unless-stopped`
 - 运行用户：`nonroot:nonroot`，只读根文件系统，`cap_drop: ALL`
 
@@ -47,7 +47,7 @@
 - `deploy/Dockerfile.ci` 把预编译二进制复制进 `distroless/static-debian12`，不在 Docker 内编译。
 - `docker/build-push-action` 推送多架构镜像到 GHCR。
 - 仓库：<https://github.com/mkktop/weiyu-mcp>
-- Release：<https://github.com/mkktop/weiyu-mcp/releases/tag/v0.4.0>
+- Release：<https://github.com/mkktop/weiyu-mcp/releases/tag/v0.4.1>
 
 `v0.2.0` 的镜像二进制缺少可执行位（artifact 上传丢失 mode），运行时报
 `/usr/local/bin/weiyu-mcp: permission denied`。`v0.2.2` 在 `Dockerfile.ci` 中使用
@@ -74,6 +74,8 @@
 对应 B 站 `x/msgfeed/at|reply|like|unread`，只需 SESSDATA，服务器 IP 不触发风控；
 游标分页（`last_id`+`last_time`），接口无状态不去重，调用方按通知 id 去重。
 
+`v0.4.1` 修复 at 通知条目时间戳取错字段（此前显示 `time: 0`，现正确取 `at_time`）。
+
 ### 初始 0.1.1 本地构建（历史）
 
 首次部署时在 GM800 本地用经典 builder 构建，耗时约 35 分钟：
@@ -93,9 +95,9 @@ distroless 不含 CA 证书，第一次运行时手工追加 CA 层生成了 `0.
 ## 更新镜像
 
 ```bash
-docker pull ghcr.io/mkktop/weiyu-mcp:0.4.0
+docker pull ghcr.io/mkktop/weiyu-mcp:0.4.1
 cd /opt/weiyu-mcp/src/deploy
-sed -i 's#^WEIYU_IMAGE=.*#WEIYU_IMAGE=ghcr.io/mkktop/weiyu-mcp:0.4.0#' .env
+sed -i 's#^WEIYU_IMAGE=.*#WEIYU_IMAGE=ghcr.io/mkktop/weiyu-mcp:0.4.1#' .env
 docker compose up -d --no-build
 docker compose logs --tail=50
 ```
@@ -106,7 +108,7 @@ docker compose logs --tail=50
 
 ```dotenv
 COMPOSE_PROJECT_NAME=weiyu-mcp
-WEIYU_IMAGE=ghcr.io/mkktop/weiyu-mcp:0.4.0
+WEIYU_IMAGE=ghcr.io/mkktop/weiyu-mcp:0.4.1
 WEIYU_PUBLIC_HOST=192.168.10.97,localhost,127.0.0.1
 WEIYU_BIND_ADDR=0.0.0.0
 WEIYU_RATE_LIMIT=2
@@ -127,12 +129,12 @@ compose 额外设置：
 ## 验证结果
 
 ```text
-health {'service': 'weiyu-mcp', 'status': 'ok', 'version': '0.4.0'}
+health {'service': 'weiyu-mcp', 'status': 'ok', 'version': '0.4.1'}
 /admin 200，管理台密码已设置（needs_setup=false，非默认密码）
 /admin/api/status 无令牌 -> 401；MCP 令牌 -> 401；admin API 令牌 -> 200
 status: 39 只读 / 45 全开，comment_enabled=true，credential_configured=true（data）
 /mcp tools/list -> 45（互动写入 + 评论写入均已开启；默认关闭时 39）
-扫码登录后 get_current_user -> bilblicopy（Lv2）
+扫码登录后 get_current_user -> 新雨bot（Lv2，mid 3707006871407373）
 get_article_content cvid=53698541 -> 约 1.5 万字正文
 get_article_content opus_id=1265361021143351318 -> 约 1.5 万字正文
 get_article_content cvid=999999999 -> 同时返回接口 -404 与页面解析失败原因
@@ -140,13 +142,11 @@ post_comment 一级评论 -> OK，返回 rpid
 post_comment parent=主评论 -> OK，root=parent=主评论（索引延迟时 3 秒后自动重试）
 @ 用户 -> content.members 包含被@用户；@ 自己不生成提及
 测试评论已全部通过 x/v2/reply/del 删除，评论区计数恢复为 0
-get_message_unread -> 11 个计数字段（测试账号当前全 0）
-get_at_feed / get_reply_feed -> {cursor:{is_end:true},items:[]}（尚无被@/被回复样本）
-get_like_feed -> {latest:[],items:[],cursor:{is_end:true}}
+get_message_unread -> 计数字段可用但不可靠（有 2 条 @ 时仍全 0，判断被@要看 feed 本身）
+get_at_feed -> 端到端验证通过：主账号（脉冲疯子）在两个视频评论区 @ 新雨bot，
+  通知均到达，含 at_time、评论内容、视频标题和跳转 URI；发出后约 1 分钟内可查到
+get_reply_feed / get_like_feed -> 空列表结构正常
 ```
-
-> v0.4.0 消息工具的端到端样本（真实被 @）待补：需要其他账号在任意评论区 @ 一次
-> `bilblicopy`，然后 `get_at_feed` 应出现该通知。@ 自己不会生成提及。
 
 ## 访问管理台
 
