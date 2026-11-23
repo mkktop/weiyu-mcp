@@ -146,6 +146,9 @@ get_message_unread -> 计数字段可用但不可靠（有 2 条 @ 时仍全 0�
 get_at_feed -> 端到端验证通过：主账号（脉冲疯子）在两个视频评论区 @ 新雨bot，
   通知均到达，含 at_time、评论内容、视频标题和跳转 URI；发出后约 1 分钟内可查到
 get_reply_feed / get_like_feed -> 空列表结构正常
+楼中楼回复 @ 被回复人本人 -> 只产生「回复我的」通知（条目内带 at_details，@ 被折叠），
+  不产生「@我的」；原始 reply API 核实 content.members 均已正确写入，@ 链接渲染正常
+get_at_feed 全部条目 root_id=0 -> 「@我的」通知只来自一级评论，楼中楼 @ 被回复人不进此列表
 ```
 
 ## 访问管理台
